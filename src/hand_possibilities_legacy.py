@@ -54,7 +54,7 @@ def _get_hand_combinations(cards: int, min_card, card_limits: defaultdict) -> li
 def get_possible_hands(num_cards: int, card_limits: defaultdict) -> HandPossibilities:
     """
     Get all the possible hands
-    TODO: figure out if implementing card constraints here makes sense
+    TODO: figure out if implementing card constraints.py here makes sense
 
     :param num_cards: number of cards
     :param card_limits: limits of the number of possible cards per int8 value. 0 is unknown

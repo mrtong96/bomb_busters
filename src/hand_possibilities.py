@@ -121,7 +121,7 @@ def compute_hand_possibilities(
                 count_mat[cur_wire_index, cur_num_wires - 1] += cur_weight
                 sub_weight += cur_weight
 
-        # if other constraints make this impossible
+        # if other constraints.py make this impossible
         if sub_weight == 0:
             return None, None, 0
         return density_mat, count_mat, sub_weight

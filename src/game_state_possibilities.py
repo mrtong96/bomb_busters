@@ -86,7 +86,7 @@ def compute_probability_matrices(
                 wire_density_matrices, list of matrices describing the wire density per position
                 wire_count_matrices, list of matrices describing the probability of having x wires per player
                 weight, total weight of combinations
-                combiantions, total number of unique combinations
+                combinations, total number of unique combinations
         """
         wire_density_matrices = [
             np.zeros((player_limit, len(wire_array)), dtype=np.float64)
@@ -113,7 +113,7 @@ def compute_probability_matrices(
             if np.any(np.array(remaining_wires) < np.array(wire_distribution)):
                 continue
 
-            # TODO: add constraints checks here once we have them
+            # TODO: add constraints.py checks here once we have them
             # recursive case, compute sub cases
             sub_results = compute_probability_matrices_helper(
                 remaining_wires = tuple(np.array(remaining_wires) - np.array(wire_distribution)),
