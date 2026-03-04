@@ -24,7 +24,7 @@ class Constraint(ABC):
     @abstractmethod
     def is_valid(
             self,
-            wire_rank: int,
+            wire_rank_index: Optional[int],
             remaining_wires: tuple[int, ...],
             wire_distribution: tuple[int, ...],
             is_terminal: bool,
@@ -33,7 +33,7 @@ class Constraint(ABC):
 
     def mutate_constraint(
             self,
-            wire_rank: int,
+            wire_rank_index: Optional[int],
             remaining_wires: tuple[int, ...],
             wire_distribution: tuple[int, ...],
             is_terminal: bool,
@@ -53,21 +53,37 @@ class IndicatorConstraint(Constraint):
 
         self.constraints = [c.astype(np.int8) for c in constraints]
 
+        self.constraint_matrices = []
+        for player_index, wires_per_player in enumerate(self.wire_limits_per_player):
+            constraint_matrix = np.ones((len(wire_ranks), wires_per_player + 1, 5), dtype=np.bool)
+
+            for wire_rank_index, wire_rank in enumerate(wire_ranks):
+                for remaining_wires in range(wires_per_player + 1):
+                    for num_wires in range(5):
+                        satisfies_constraint = True
+
+                        for offset in range(num_wires):
+                            index = wires_per_player - remaining_wires + offset
+                            if index >= wires_per_player:
+                                satisfies_constraint = False
+                            elif self.constraints[player_index][index] == self.EMPTY:
+                                continue
+                            elif self.constraints[player_index][index] != self.wire_ranks[wire_rank_index]:
+                                satisfies_constraint = False
+
+                        constraint_matrix[wire_rank_index, remaining_wires, num_wires] = satisfies_constraint
+            self.constraint_matrices.append(constraint_matrix)
+
     def is_valid(
             self,
-            wire_rank: int,
+            wire_rank_index: Optional[int],
             remaining_wires: tuple[int, ...],
             wire_distribution: tuple[int, ...],
             is_terminal: bool,
     ) -> bool:
-        # for each wire we are distributing to the players
-        for player_index, player_wires in enumerate(wire_distribution):
-            for offset in range(player_wires):
-                wire_index = self.wire_limits_per_player[player_index] - remaining_wires[player_index] + offset
-                constraint_rank = self.constraints[player_index][wire_index]
-
-                if constraint_rank != self.EMPTY and constraint_rank != wire_rank:
-                    return False
+        for player_index in range(len(self.wire_limits_per_player)):
+            if not self.constraint_matrices[player_index][wire_rank_index, remaining_wires[player_index], wire_distribution[player_index]]:
+                return False
         return True
 
 class SubsetConstraint(Constraint):
@@ -81,11 +97,13 @@ class SubsetConstraint(Constraint):
 
     def is_valid(
         self,
-        wire_rank: int,
+        wire_rank_index: Optional[int],
         remaining_wires: tuple[int, ...],
         wire_distribution: tuple[int, ...],
         is_terminal: bool,
     ) -> bool:
+        wire_rank = self.wire_ranks[wire_rank_index]
+
         # we're at the end, should have zero wires left
         if is_terminal:
             return self.num_wires == 0
@@ -107,11 +125,13 @@ class SubsetConstraint(Constraint):
 
     def mutate_constraint(
             self,
-            wire_rank: int,
+            wire_rank_index: Optional[int],
             remaining_wires: tuple[int, ...],
             wire_distribution: tuple[int, ...],
             is_terminal: bool,
     ):
+        wire_rank = self.wire_ranks[wire_rank_index]
+
         if is_terminal:
             raise RuntimeError("not implemented for this class")
         # we don't care, not an important wire

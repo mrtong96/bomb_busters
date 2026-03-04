@@ -119,7 +119,7 @@ def compute_probability_matrices(
         # we reached the end of wires
         if wire_array_index == len(wire_array):
             constraint_args = [
-                Constraint.EMPTY,
+                None,
                 remaining_wires,
                 tuple(0 for _ in range(num_players)),
                 True,
@@ -144,7 +144,7 @@ def compute_probability_matrices(
 
                 # arguments to evaluate every constraint
                 constraint_args = [
-                    wire_array[wire_array_index],
+                    wire_array_index,
                     remaining_wires,
                     wire_distribution,
                     False,
