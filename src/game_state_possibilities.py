@@ -38,7 +38,7 @@ class GameState:
     wire_limits: dict[int, int]
 
 @functools.cache
-def get_single_wire_rank_distributions(num_wires: int, num_players: int) -> Counter:
+def get_single_wire_rank_distributions(num_wires: int, num_players: int) -> tuple:
     """
     Given num_wires limit to distribute among num_players, enumerate through the balls and
     bins problem to return a (ncr(num_wires + num_players - 1, num_wires) x num_players)
@@ -46,16 +46,21 @@ def get_single_wire_rank_distributions(num_wires: int, num_players: int) -> Coun
 
     :param num_wires: number of wires
     :param num_players: number of players
+
+    Returns: a tuple of the distributions and counts arrays
     """
     if num_wires == 0:
-        return Counter([tuple([0 for _ in range(num_players)])])
+        counter = Counter([tuple([0 for _ in range(num_players)])])
 
-    counts = list()
-    for combo in itertools.product(range(num_players), repeat=num_wires):
-        count = Counter(list(combo))
-        counts.append(tuple([count.get(i, 0) for i in range(num_players)]))
+    else:
+        counts = list()
+        for combo in itertools.product(range(num_players), repeat=num_wires):
+            count = Counter(list(combo))
+            counts.append(tuple([count.get(i, 0) for i in range(num_players)]))
+        counter = Counter(counts)
 
-    return Counter(counts)
+    distributions, counts = list(zip(*counter.items()))
+    return np.array(distributions, dtype=np.int32), np.array(counts, dtype=np.int64)
 
 def compute_probability_matrices(
     wire_limits_per_player: np.array,
@@ -131,28 +136,35 @@ def compute_probability_matrices(
 
         lower_wires = int(lower_wire_array_limits[wire_array_index])
         upper_wires = int(upper_wire_array_limits[wire_array_index])
+        remaining_arr = np.array(remaining_wires, dtype=np.int32)
         for num_wires_to_distribute in range(lower_wires, upper_wires + 1):
-            wire_distributions = get_single_wire_rank_distributions(
+            dist_array, counts_array = get_single_wire_rank_distributions(
                 num_wires=int(num_wires_to_distribute),
-                num_players=len(remaining_wires)
+                num_players=len(remaining_wires),
             )
 
-            for wire_distribution, count in wire_distributions.items():
-                # if there are any cases where we have too many wires to distribute towards a player
-                if any(r < d for r, d in zip(remaining_wires, wire_distribution)):
-                    continue
+            # vectorized capacity check: drop any distribution where a player gets more than they have
+            valid_mask = ~np.any(dist_array > remaining_arr, axis=1)
 
-                # arguments to evaluate every constraint
-                constraint_args = [
-                    wire_array_index,
-                    remaining_wires,
-                    wire_distribution,
-                    False,
-                ]
-                # if a constraint is violated, continue
-                all_constraints = fixed_constraints + list(cur_mutating_constraints)
-                if any(not constraint.is_valid(*constraint_args) for constraint in all_constraints):
-                    continue
+            # vectorized fixed-constraint check across all surviving distributions at once
+            for constraint in fixed_constraints:
+                valid_mask[valid_mask] &= constraint.vectorized_is_valid(
+                    wire_rank_index=wire_array_index,
+                    remaining_wires=remaining_wires,
+                    distributions=dist_array[valid_mask],
+                    is_terminal_array=None,
+                )
+
+            # for each of the valid indices
+            for idx in np.where(valid_mask)[0]:
+                wire_distribution = dist_array[idx]
+                count = int(counts_array[idx])
+
+                # per-distribution check only for mutating constraints
+                constraint_args = [wire_array_index, remaining_wires, wire_distribution, False]
+                if cur_mutating_constraints:
+                    if any(not c.is_valid(*constraint_args) for c in cur_mutating_constraints):
+                        continue
 
                 # construct the mutating constraints
                 recursive_constraints = []

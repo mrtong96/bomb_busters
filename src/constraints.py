@@ -40,6 +40,27 @@ class Constraint(ABC):
     ):
         raise RuntimeError("not implemented for this class")
 
+    def vectorized_is_valid(
+            self,
+            wire_rank_index: int,
+            remaining_wires: tuple[int, ...],
+            distributions: np.ndarray,
+            is_terminal_array: Optional[tuple[bool, ...]],
+    ) -> np.ndarray:
+        """
+        Default (slow) implementation: calls is_valid per distribution.
+        Override for vectorized constraints.
+        """
+        is_terminal_array = is_terminal_array or tuple(False for _ in remaining_wires)
+        return np.array(
+            [
+                self.is_valid(wire_rank_index, remaining_wires, tuple(distribution), is_terminal)
+                for distribution, is_terminal
+                in zip(distributions, is_terminal_array)
+            ],
+            dtype=np.bool_,
+        )
+
     @property
     def mutates(self) -> bool:
         return False
@@ -53,10 +74,14 @@ class IndicatorConstraint(Constraint):
 
         self.constraints = [c.astype(np.int8) for c in constraints]
 
+        self.constraint_matrix = np.zeros(
+            (len(self.wire_limits_per_player), len(wire_ranks), max(self.wire_limits_per_player) + 1, 5),
+            dtype=np.bool
+        )
+
+        # padded matrix of whether every possible wire constraint is valid for this particular set of indicator constraints or not
         self.constraint_matrices = []
         for player_index, wires_per_player in enumerate(self.wire_limits_per_player):
-            constraint_matrix = np.ones((len(wire_ranks), wires_per_player + 1, 5), dtype=np.bool)
-
             for wire_rank_index, wire_rank in enumerate(wire_ranks):
                 for remaining_wires in range(wires_per_player + 1):
                     for num_wires in range(5):
@@ -70,10 +95,7 @@ class IndicatorConstraint(Constraint):
                                 continue
                             elif self.constraints[player_index][index] != self.wire_ranks[wire_rank_index]:
                                 satisfies_constraint = False
-
-                        constraint_matrix[wire_rank_index, remaining_wires, num_wires] = satisfies_constraint
-            self.constraint_matrices.append(constraint_matrix)
-
+                        self.constraint_matrix[player_index, wire_rank_index, remaining_wires, num_wires] = satisfies_constraint
     def is_valid(
             self,
             wire_rank_index: Optional[int],
@@ -81,10 +103,34 @@ class IndicatorConstraint(Constraint):
             wire_distribution: tuple[int, ...],
             is_terminal: bool,
     ) -> bool:
-        for player_index in range(len(self.wire_limits_per_player)):
-            if not self.constraint_matrices[player_index][wire_rank_index, remaining_wires[player_index], wire_distribution[player_index]]:
+        for player_index, (r, d) in enumerate(zip(remaining_wires, wire_distribution)):
+            if not self.constraint_matrix[player_index, wire_rank_index, r, d]:
                 return False
         return True
+
+    def vectorized_is_valid(
+            self,
+            wire_rank_index: int,
+            remaining_wires: tuple[int, ...],
+            distributions: np.ndarray,
+            is_terminal_array: Optional[tuple[bool, ...]],
+    ) -> np.ndarray:
+        """
+        Vectorized validity check across all distributions at once.
+
+        Args:
+            wire_rank_index: current wire type index
+            remaining_wires: remaining wire slots per player
+            distributions: (N, n_players) int32 array of candidate distributions
+            is_terminal_array: array of is_terminal values. Ignored for this method
+
+        Returns:
+            Boolean mask of shape (N,) — True where the distribution is valid.
+        """
+        mask = np.ones(len(distributions), dtype=np.bool_)
+        for player_index, player_wires in enumerate(remaining_wires):
+            mask &= self.constraint_matrix[player_index, wire_rank_index, player_wires, distributions[:, player_index]]
+        return mask
 
 class SubsetConstraint(Constraint):
     """
