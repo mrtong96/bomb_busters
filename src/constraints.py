@@ -1,23 +1,29 @@
 # class of constraints
+import functools
 from abc import ABC, abstractmethod
 from typing import Optional
-
+from numba import jit
 import numpy as np
+
+EMPTY = -1
 
 class Constraint(ABC):
     """
     Constraints for the wires
-    """
-    EMPTY = -1
 
-    def __init__(self):
-        pass
+    TODO:
+        add wire_limits_per_player as a constructor arg
+        optimize the calls of indicator constraint to cache a lot of the outputs instead of going through the for loop
+    """
+    EMPTY = EMPTY
+
+    def __init__(self, wire_limits_per_player: np.array):
+        self.wire_limits_per_player = wire_limits_per_player
 
     @abstractmethod
     def is_valid(
             self,
             wire_rank: int,
-            wire_limits_per_player: np.array,
             remaining_wires: tuple[int, ...],
             wire_distribution: tuple[int, ...],
             is_terminal: bool,
@@ -27,7 +33,6 @@ class Constraint(ABC):
     def mutate_constraint(
             self,
             wire_rank: int,
-            wire_limits_per_player: np.array,
             remaining_wires: tuple[int, ...],
             wire_distribution: tuple[int, ...],
             is_terminal: bool,
@@ -42,15 +47,14 @@ class IndicatorConstraint(Constraint):
     """
     Meant for wires with a fixed position
     """
-    def __init__(self, constraints: list[np.array]):
-        super().__init__()
+    def __init__(self, wire_limits_per_player: np.array, constraints: list[np.array]):
+        super().__init__(wire_limits_per_player)
 
-        self.constraints = constraints
+        self.constraints = [c.astype(np.int8) for c in constraints]
 
     def is_valid(
             self,
             wire_rank: int,
-            wire_limits_per_player: np.array,
             remaining_wires: tuple[int, ...],
             wire_distribution: tuple[int, ...],
             is_terminal: bool,
@@ -58,7 +62,7 @@ class IndicatorConstraint(Constraint):
         # for each wire we are distributing to the players
         for player_index, player_wires in enumerate(wire_distribution):
             for offset in range(player_wires):
-                wire_index = wire_limits_per_player[player_index] - remaining_wires[player_index] + offset
+                wire_index = self.wire_limits_per_player[player_index] - remaining_wires[player_index] + offset
                 constraint_rank = self.constraints[player_index][wire_index]
 
                 if constraint_rank != self.EMPTY and constraint_rank != wire_rank:
@@ -69,15 +73,14 @@ class SubsetConstraint(Constraint):
     """
     Meant to represent yellow/red wires
     """
-    def __init__(self, wires: list[int], num_wires: int):
-        super().__init__()
+    def __init__(self, wire_limits_per_player: np.array, wires: list[int], num_wires: int):
+        super().__init__(wire_limits_per_player)
         self.wires = wires
         self.num_wires = num_wires
 
     def is_valid(
         self,
         wire_rank: int,
-        wire_limits_per_player: np.array,
         remaining_wires: tuple[int, ...],
         wire_distribution: tuple[int, ...],
         is_terminal: bool,
@@ -104,7 +107,6 @@ class SubsetConstraint(Constraint):
     def mutate_constraint(
             self,
             wire_rank: int,
-            wire_limits_per_player: np.array,
             remaining_wires: tuple[int, ...],
             wire_distribution: tuple[int, ...],
             is_terminal: bool,
@@ -120,7 +122,7 @@ class SubsetConstraint(Constraint):
             return self
 
         remaining_wires = [el for el in self.wires if el != wire_rank]
-        return SubsetConstraint(remaining_wires, self.num_wires - 1)
+        return SubsetConstraint(self.wire_limits_per_player, remaining_wires, self.num_wires - 1)
 
     def __eq__(self, other):
         return (

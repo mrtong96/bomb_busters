@@ -120,9 +120,8 @@ def compute_probability_matrices(
         if wire_array_index == len(wire_array):
             constraint_args = [
                 Constraint.EMPTY,
-                wire_limits_per_player,
                 remaining_wires,
-                [0 for _ in range(num_players)],
+                tuple(0 for _ in range(num_players)),
                 True,
             ]
             is_valid = all([constraint.is_valid(*constraint_args) for constraint in cur_mutating_constraints])
@@ -140,13 +139,12 @@ def compute_probability_matrices(
 
             for wire_distribution, count in wire_distributions.items():
                 # if there are any cases where we have too many wires to distribute towards a player
-                if np.any(np.array(remaining_wires) < np.array(wire_distribution)):
+                if any(r < d for r, d in zip(remaining_wires, wire_distribution)):
                     continue
 
                 # arguments to evaluate every constraint
                 constraint_args = [
                     wire_array[wire_array_index],
-                    wire_limits_per_player,
                     remaining_wires,
                     wire_distribution,
                     False,
@@ -163,7 +161,7 @@ def compute_probability_matrices(
 
                 # recursive case, compute sub cases
                 sub_results = compute_probability_matrices_helper(
-                    remaining_wires = tuple(np.array(remaining_wires) - np.array(wire_distribution)),
+                    remaining_wires = tuple(r - d for r, d in zip(remaining_wires, wire_distribution)),
                     wire_array_index=wire_array_index + 1,
                     cur_mutating_constraints=tuple(recursive_constraints),
                 )
@@ -285,7 +283,7 @@ def constraint_tests():
     constraints = [np.ones(limit) * Constraint.EMPTY for limit in wire_limits_per_player]
     # have one of each wire for the first player
     constraints[0] = np.array(list(range(len(constraints[0]))))
-    indicator_constraint = IndicatorConstraint(constraints)
+    indicator_constraint = IndicatorConstraint(wire_limits_per_player, constraints)
 
     # profile things
     results = compute_probability_matrices(
@@ -316,7 +314,7 @@ def constraint_tests2():
         deck = np.array([i for i in range(wires) for _ in range(4)])
         hand = np.random.choice(deck, size=((wires * 4) + 4) // 5, replace=False, p=None)
         constraints[0] = np.array(list(sorted(hand)))
-        indicator_constraint = IndicatorConstraint(constraints)
+        indicator_constraint = IndicatorConstraint(wire_limits_per_player, constraints)
         # profile things
         _ = compute_probability_matrices(
             wire_limits_per_player=wire_limits_per_player,
@@ -328,4 +326,5 @@ def constraint_tests2():
     print(time.time() - t0)
 
 if __name__ == '__main__':
+    constraint_tests()
     constraint_tests2()
