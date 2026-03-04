@@ -17,8 +17,9 @@ class Constraint(ABC):
     """
     EMPTY = EMPTY
 
-    def __init__(self, wire_limits_per_player: np.array):
+    def __init__(self, wire_limits_per_player: np.array, wire_ranks: list[int]):
         self.wire_limits_per_player = wire_limits_per_player
+        self.wire_ranks = wire_ranks
 
     @abstractmethod
     def is_valid(
@@ -47,8 +48,8 @@ class IndicatorConstraint(Constraint):
     """
     Meant for wires with a fixed position
     """
-    def __init__(self, wire_limits_per_player: np.array, constraints: list[np.array]):
-        super().__init__(wire_limits_per_player)
+    def __init__(self, wire_limits_per_player: np.array, wire_ranks: list[int], constraints: list[np.array]):
+        super().__init__(wire_limits_per_player, wire_ranks)
 
         self.constraints = [c.astype(np.int8) for c in constraints]
 
@@ -73,8 +74,8 @@ class SubsetConstraint(Constraint):
     """
     Meant to represent yellow/red wires
     """
-    def __init__(self, wire_limits_per_player: np.array, wires: list[int], num_wires: int):
-        super().__init__(wire_limits_per_player)
+    def __init__(self, wire_limits_per_player: np.array, wire_ranks: list[int], wires: list[int], num_wires: int):
+        super().__init__(wire_limits_per_player, wire_ranks)
         self.wires = wires
         self.num_wires = num_wires
 

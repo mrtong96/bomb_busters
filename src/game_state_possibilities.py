@@ -283,7 +283,8 @@ def constraint_tests():
     constraints = [np.ones(limit) * Constraint.EMPTY for limit in wire_limits_per_player]
     # have one of each wire for the first player
     constraints[0] = np.array(list(range(len(constraints[0]))))
-    indicator_constraint = IndicatorConstraint(wire_limits_per_player, constraints)
+    wire_ranks = sorted(wire_limits.keys())
+    indicator_constraint = IndicatorConstraint(wire_limits_per_player, wire_ranks, constraints)
 
     # profile things
     results = compute_probability_matrices(
@@ -314,7 +315,8 @@ def constraint_tests2():
         deck = np.array([i for i in range(wires) for _ in range(4)])
         hand = np.random.choice(deck, size=((wires * 4) + 4) // 5, replace=False, p=None)
         constraints[0] = np.array(list(sorted(hand)))
-        indicator_constraint = IndicatorConstraint(wire_limits_per_player, constraints)
+        wire_ranks = sorted(wire_limits.keys())
+        indicator_constraint = IndicatorConstraint(wire_limits_per_player, wire_ranks, constraints)
         # profile things
         _ = compute_probability_matrices(
             wire_limits_per_player=wire_limits_per_player,
