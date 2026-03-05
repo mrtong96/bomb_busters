@@ -3,7 +3,7 @@ import functools
 import itertools
 import time
 from typing import Optional, Iterator
-from collections import Counter
+from collections import Counter, defaultdict
 
 import numpy as np
 
@@ -75,6 +75,7 @@ def get_wire_combinations(
         wire_constraint = [(wire, cur_wires) for cur_wires in range(min_wires, max_wires + 1)]
         wire_combinations.append(wire_constraint)
 
+    valid_wire_combinations = []
     for combo in itertools.product(*wire_combinations):
         combo = sorted(combo, key=lambda x: x[0])
         wires, counts = list(zip(*combo))
@@ -91,9 +92,9 @@ def get_wire_combinations(
         if not passes_subset_constraints:
             continue
 
-        wire_combinations.append(combo)
+        valid_wire_combinations.append(combo)
 
-    return wire_combinations
+    return valid_wire_combinations
 
 def get_wire_placement_key(wire_subset: tuple[tuple[int, int], ...], constraints: list[Constraint]) -> tuple:
     """
@@ -106,17 +107,36 @@ def get_wire_placement_key(wire_subset: tuple[tuple[int, int], ...], constraints
     subset_constraints = [constraint for constraint in constraints if isinstance(constraint, SubsetConstraint)]
 
     wires, counts = list(zip(*wire_subset))
-
-    tuple_args = [sum(counts), len(counts) - 1]
+    tuple_args = [len(wire_subset), sum(counts), counts[-1]]
     for constraint in subset_constraints:
         tuple_args.append(tuple(sorted(set(constraint.wires).intersection(wires))))
     return tuple(tuple_args)
+
+def build_wire_key_mapping(wire_subsets: set[tuple[tuple[int, int], ...]], constraints: list[Constraint]) -> dict:
+    """
+    Build the key mapping to figure out which order to evaluate everything
+
+    :param wire_subsets: set of collections of (rank, count) tuples
+    :param constraints: all the constraints
+    :return: map of (wire_subset_key: [tuple[num_wires, prev_wire_subset_key], ...])
+    """
+    wire_key_mapping = defaultdict(list)
+
+    for wire_subset in wire_subsets:
+        wire_subset_key = get_wire_placement_key(wire_subset, constraints)
+        wires, counts = list(zip(*wire_subset))
+
+        prev_wire_subset_key = None if len(wire_subset) == 1 else get_wire_placement_key(wire_subset[:-1], constraints)
+        wire_key_mapping[wire_subset_key].append((prev_wire_subset_key, wires[-1]))
+
+    return wire_key_mapping
+
 
 def compute_probability_matrices(
     wire_limits_per_player: np.array,
     wire_limits: dict[int, tuple[int, int]],
     constraints: Optional[list[Constraint]] = None,
-) -> tuple[np.array, np.array, float, float]:
+) -> tuple:
     """
     way to recursively compute wire limits
 
@@ -130,7 +150,6 @@ def compute_probability_matrices(
     total_wires = sum(wire_limits_per_player)
     max_wires_per_player = max(wire_limits_per_player)
     num_possible_wires = len(wire_limits)
-    wire_to_array_index = {wire: i for i, wire in enumerate(sorted(wire_limits.keys()))}
     constraints = constraints or []
     indicator_constraints = [constraint for constraint in constraints if isinstance(constraint, IndicatorConstraint)]
     if len(indicator_constraints) > 1:
@@ -140,7 +159,7 @@ def compute_probability_matrices(
     # First compute all possible combinations of wires that can be placed via itertools product
     wire_combinations = get_wire_combinations(total_wires, wire_limits, constraints)
     wire_subsets = set([tuple(combo[:index + 1]) for combo in wire_combinations for index in range(len(combo))])
-    wire_subsets = sorted(wire_subsets, key=lambda x: sum(count for _, count in x))
+    wire_key_mapping = build_wire_key_mapping(wire_subsets, constraints)
 
     # Create a dictionary mapping [partial wire placement] -> vectorized state variable
     wire_placement_dict = dict()
@@ -148,134 +167,132 @@ def compute_probability_matrices(
     # state variable should have (wire_density tensor, wire_combinations tensor, weights, combinations)
         # wire_density_tensor maps (each combo, num_players, padded_wires_per_player, num_possible_wires)
         # wire_combinations_tensor maps (each combo, num_players, num_possible_wires, 4)
-    for wire_subset in wire_subsets:
-        subset_total_wires = sum(el[1] for el in wire_subset)
-
+    for wire_subset_key, wire_mapping_tuples in sorted(wire_key_mapping.items()):
         # wire placement mapping to the output
-        wire_subset_key = get_wire_placement_key(wire_subset, constraints)
+        len_subset, subset_total_wires, latest_wire_count = wire_subset_key[:3]
         wire_placements = list(get_wire_placements(total_wires, subset_total_wires, num_players))
-        distributions, counts = get_single_wire_rank_distributions(wire_subset[-1][1], num_players)
-        if wire_subset_key in wire_placement_dict:
-            (wire_placement_mapping, wire_placements_matrix, density_tensor, combinations_tensor, combinations, weight
-             ) = wire_placement_dict[wire_subset_key]
-        else:
-            wire_placement_mapping = {wire_dist: i for i, wire_dist in enumerate(wire_placements)}
-            wire_placements_matrix = np.array(wire_placements, dtype=np.int8)
-            density_tensor = np.zeros(
-                (len(wire_placements), num_players, max_wires_per_player, num_possible_wires),
-                dtype=np.float64
-            )
-            combinations_tensor = np.zeros(
-                (len(wire_placements), num_players, num_possible_wires, 4),
-                dtype=np.float64
-            )
-            combinations = np.zeros(len(wire_placements), dtype=np.float64)
-            weight = np.zeros(len(wire_placements), dtype=np.float64)
+        distributions, counts = get_single_wire_rank_distributions(latest_wire_count, num_players)
 
-        # base case, just assign counts to the matrices without dot products
-        if len(wire_subset) == 1:
-            # rank of the wire
-            wire_array_index = wire_to_array_index[wire_subset[0][0]]
+        wire_placement_mapping = {wire_dist: i for i, wire_dist in enumerate(wire_placements)}
+        wire_placements_matrix = np.array(wire_placements, dtype=np.int8)
+        density_tensor = np.zeros(
+            (len(wire_placements), num_players, max_wires_per_player, num_possible_wires),
+            dtype=np.float64
+        )
+        combinations_tensor = np.zeros(
+            (len(wire_placements), num_players, num_possible_wires, 4),
+            dtype=np.float64
+        )
+        combinations = np.zeros(len(wire_placements), dtype=np.float64)
+        weight = np.zeros(len(wire_placements), dtype=np.float64)
 
-            # for each possible distribution of wires
-            for cur_distribution, cur_count in zip(distributions, counts):
-                # check the indicator constraints
-                if indicator_constraint:
-                    constraint_valid = indicator_constraint.is_valid(
-                        wire_array_index,
-                        np.zeros(num_players, dtype=np.int8),
-                        cur_distribution
-                    )
-                    if not constraint_valid:
-                        continue
+        for wire_mapping_tuple in wire_mapping_tuples:
+            prev_wire_subset_key, wire_rank = wire_mapping_tuple
 
-                # assign all the matrix info
-                placement_index = wire_placement_mapping[tuple(cur_distribution)]
-                player_indices = np.repeat(np.arange(num_players), cur_distribution)
-                wire_offsets = np.concatenate([np.arange(el) for el in cur_distribution])
+            # base case, just assign counts to the matrices without dot products
+            if len_subset == 1:
+                # rank of the wire
+                wire_array_index = len_subset - 1
 
-                density_tensor[
-                    placement_index,
-                    player_indices,
-                    wire_offsets,
-                    wire_array_index
-                ] += cur_count
-
-                non_zero_mask = cur_distribution != 0
-                combinations_tensor[
-                    placement_index,
-                    np.arange(num_players)[non_zero_mask],
-                    wire_array_index,
-                    cur_distribution[non_zero_mask] - 1
-                ] += cur_count
-                combinations[placement_index] += 1
-                weight[placement_index] += cur_count
-        else:
-            wire_array_index = wire_to_array_index[wire_subset[-1][0]]
-            prev_info = wire_placement_dict[get_wire_placement_key(wire_subset[:-1], constraints)]
-
-            # TODO: write this in more vectorized notation
-            for placement_index, placement in enumerate(wire_placements):
-                placement_vector = wire_placements_matrix[placement_index]
-
+                # for each possible distribution of wires
                 for cur_distribution, cur_count in zip(distributions, counts):
-                    # We are trying to place more wires than we have room for, continue
-                    if np.any((placement_vector - cur_distribution) < 0):
-                        continue
-
-                    # assign all the matrix info
-                    prev_filled = placement_vector - cur_distribution
-                    prev_tuple = tuple(prev_filled)
-                    prev_index = prev_info[0][prev_tuple]
-                    prev_weight = prev_info[5][prev_index]
-
                     # check the indicator constraints
                     if indicator_constraint:
                         constraint_valid = indicator_constraint.is_valid(
                             wire_array_index,
-                            prev_filled,
+                            np.zeros(num_players, dtype=np.int8),
                             cur_distribution
                         )
                         if not constraint_valid:
                             continue
 
-                    placement_index = wire_placement_mapping[tuple(placement_vector)]
+                    # assign all the matrix info
+                    placement_index = wire_placement_mapping[tuple(cur_distribution)]
                     player_indices = np.repeat(np.arange(num_players), cur_distribution)
-                    prefilled_offsets = np.repeat(prev_filled, cur_distribution)
                     wire_offsets = np.concatenate([np.arange(el) for el in cur_distribution])
-                    offsets = prefilled_offsets + wire_offsets
 
                     density_tensor[
                         placement_index,
                         player_indices,
-                        offsets,
+                        wire_offsets,
                         wire_array_index
-                    ] += cur_count * prev_weight
+                    ] += cur_count
+
                     non_zero_mask = cur_distribution != 0
                     combinations_tensor[
                         placement_index,
                         np.arange(num_players)[non_zero_mask],
                         wire_array_index,
                         cur_distribution[non_zero_mask] - 1
-                    ] += cur_count * prev_weight
-                    combinations[placement_index] += prev_info[4][prev_index]
-                    weight[placement_index] += cur_count * prev_weight
+                    ] += cur_count
+                    combinations[placement_index] += 1
+                    weight[placement_index] += cur_count
+            else:
+                wire_array_index = len_subset - 1
+                prev_info = wire_placement_dict[prev_wire_subset_key]
 
-                    # Multiply the new cases in as a dot product
-                    density_tensor[placement_index] += prev_info[2][prev_index] * cur_count
-                    combinations_tensor[placement_index] += prev_info[3][prev_index] * cur_count
+                # TODO: write this in more vectorized notation
+                for placement_index, placement in enumerate(wire_placements):
+                    placement_vector = wire_placements_matrix[placement_index]
 
-        wire_placement_dict[wire_subset_key] = (
-            wire_placement_mapping,
-            wire_placements_matrix,
-            density_tensor,
-            combinations_tensor,
-            combinations,
-            weight,
-        )
+                    for cur_distribution, cur_count in zip(distributions, counts):
+                        # We are trying to place more wires than we have room for, continue
+                        if np.any((placement_vector - cur_distribution) < 0):
+                            continue
+
+                        # assign all the matrix info
+                        prev_filled = placement_vector - cur_distribution
+                        prev_tuple = tuple(prev_filled)
+                        prev_index = prev_info[0][prev_tuple]
+                        prev_weight = prev_info[5][prev_index]
+
+                        # check the indicator constraints
+                        if indicator_constraint:
+                            constraint_valid = indicator_constraint.is_valid(
+                                wire_array_index,
+                                prev_filled,
+                                cur_distribution
+                            )
+                            if not constraint_valid:
+                                continue
+
+                        placement_index = wire_placement_mapping[tuple(placement_vector)]
+                        player_indices = np.repeat(np.arange(num_players), cur_distribution)
+                        prefilled_offsets = np.repeat(prev_filled, cur_distribution)
+                        wire_offsets = np.concatenate([np.arange(el) for el in cur_distribution])
+                        offsets = prefilled_offsets + wire_offsets
+
+                        density_tensor[
+                            placement_index,
+                            player_indices,
+                            offsets,
+                            wire_array_index
+                        ] += cur_count * prev_weight
+                        non_zero_mask = cur_distribution != 0
+                        combinations_tensor[
+                            placement_index,
+                            np.arange(num_players)[non_zero_mask],
+                            wire_array_index,
+                            cur_distribution[non_zero_mask] - 1
+                        ] += cur_count * prev_weight
+                        combinations[placement_index] += prev_info[4][prev_index]
+                        weight[placement_index] += cur_count * prev_weight
+
+                        # Multiply the new cases in as a dot product
+                        density_tensor[placement_index] += prev_info[2][prev_index] * cur_count
+                        combinations_tensor[placement_index] += prev_info[3][prev_index] * cur_count
+
+            wire_placement_dict[wire_subset_key] = (
+                wire_placement_mapping,
+                wire_placements_matrix,
+                density_tensor,
+                combinations_tensor,
+                combinations,
+                weight,
+            )
 
     # Aggregate all the info in one final result
-    full_results = [data for tuple_key, data in wire_placement_dict.items() if tuple_key[0] == total_wires]
+    full_results = [data for tuple_key, data in wire_placement_dict.items() if tuple_key[0] == num_possible_wires]
     density_tensor = functools.reduce(lambda x, y: x + y, [el[2] for el in full_results])
     combinations_tensor = functools.reduce(lambda x, y: x + y, [el[3] for el in full_results])
     combinations = functools.reduce(lambda x, y: x + y, [el[4] for el in full_results])
@@ -343,7 +360,7 @@ def constraint_tests2():
     wire_limits_per_player = np.array([((wires * 4) + 4 - i) // 5 for i in range(5)])
     wire_limits = {i: (4, 4) for i in range(wires)}
 
-    for i in range(10):
+    for i in range(1):
         constraints = [np.ones(limit) * Constraint.EMPTY for limit in wire_limits_per_player]
         # have one of each wire for the first player
 
@@ -403,5 +420,5 @@ def sanity_combination_checks():
 
 if __name__ == "__main__":
     # sanity_combination_checks()
-    constraint_tests()
+    # constraint_tests()
     constraint_tests2()

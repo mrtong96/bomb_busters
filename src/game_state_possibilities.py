@@ -340,5 +340,6 @@ def constraint_tests2():
     print(time.time() - t0)
 
 if __name__ == '__main__':
+    # main()
     constraint_tests()
     constraint_tests2()
