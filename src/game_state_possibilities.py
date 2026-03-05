@@ -88,119 +88,88 @@ def compute_probability_matrices(
     fixed_constraints = [el for el in constraints if not el.mutates]
     mutating_constraints = tuple([el for el in constraints if el.mutates])
 
-    @functools.cache
-    def compute_probability_matrices_helper(
-        remaining_wires: tuple[int, ...],
-        wire_array_index: int,
-        cur_mutating_constraints: tuple[Constraint],
-    ) -> tuple[list[np.array], list[np.array], float, int]:
-        """
-        Helper function that computes all the cached values.
-        Computes things one wire type at a time
+    def compute_probability_matrices_dp():
+        n_wire_types = len(wire_array)
+        n_players = num_players
 
-        Args:
-            :param remaining_wires: number of wires for each remaining player
-            :param wire_array_index: int in [0, len(wire_array-1)). Which wire to use
-            :param cur_mutating_constraints: additional constraints for the hands
+        initial_remaining = tuple(int(x) for x in wire_limits_per_player)
+        initial_constraints = tuple(mutating_constraints)
 
-        Returns:
-            tuple of:
-                wire_density_matrices, list of matrices describing the wire density per position
-                wire_count_matrices, list of matrices describing the probability of having x wires per player
-                weight, total weight of combinations
-                combinations, total number of unique combinations
-        """
-        wire_density_matrices = [
-            np.zeros((player_limit, len(wire_array)), dtype=np.float64)
-            for player_limit in remaining_wires
-        ]
-        wire_count_matrices = [
-            np.zeros((len(wire_array), 4), dtype=np.float64)
-            for _ in remaining_wires
-        ]
-        combinations = 0
-        weight = 0.0
+        # Forward pass: enumerate all reachable states per level via BFS
+        states_per_level = [set() for _ in range(n_wire_types + 1)]
+        states_per_level[0].add((initial_remaining, initial_constraints))
 
-        # we reached the end of wires
-        if wire_array_index == len(wire_array):
-            constraint_args = [
-                None,
-                remaining_wires,
-                tuple(0 for _ in range(num_players)),
-                True,
-            ]
-            is_valid = all([constraint.is_valid(*constraint_args) for constraint in cur_mutating_constraints])
-            weight = 1.0 if is_valid else 0.0
-            combinations = 1 if is_valid else 0
-            return wire_density_matrices, wire_count_matrices, weight, combinations
+        for k in range(n_wire_types):
+            lower, upper = int(lower_wire_array_limits[k]), int(upper_wire_array_limits[k])
+            for (rem, cstr) in states_per_level[k]:
+                rem_arr = np.array(rem, dtype=np.int32)
+                for num_wires in range(lower, upper + 1):
+                    dist_array, _ = get_single_wire_rank_distributions(num_wires, n_players)
+                    valid_mask = ~np.any(dist_array > rem_arr, axis=1)
+                    for constraint in fixed_constraints:
+                        valid_mask[valid_mask] &= constraint.vectorized_is_valid(k, rem, dist_array[valid_mask], None)
+                    for idx in np.where(valid_mask)[0]:
+                        dist = dist_array[idx]
+                        cargs = [k, rem, dist, False]
+                        if cstr and any(not c.is_valid(*cargs) for c in cstr):
+                            continue
+                        new_cstr = tuple(c.mutate_constraint(*cargs) for c in cstr) if cstr else cstr
+                        new_rem = tuple((rem_arr - dist).tolist())
+                        states_per_level[k + 1].add((new_rem, new_cstr))
 
-        lower_wires = int(lower_wire_array_limits[wire_array_index])
-        upper_wires = int(upper_wire_array_limits[wire_array_index])
-        remaining_arr = np.array(remaining_wires, dtype=np.int32)
-        for num_wires_to_distribute in range(lower_wires, upper_wires + 1):
-            dist_array, counts_array = get_single_wire_rank_distributions(
-                num_wires=int(num_wires_to_distribute),
-                num_players=len(remaining_wires),
-            )
+        # Backward pass: compute values bottom-up
+        dp = {}
 
-            # vectorized capacity check: drop any distribution where a player gets more than they have
-            valid_mask = ~np.any(dist_array > remaining_arr, axis=1)
+        # Terminal base cases
+        for (rem, cstr) in states_per_level[n_wire_types]:
+            dm = [np.zeros((rem[p], n_wire_types), dtype=np.float64) for p in range(n_players)]
+            cm = [np.zeros((n_wire_types, 4), dtype=np.float64) for p in range(n_players)]
+            cargs = [None, rem, tuple(0 for _ in range(n_players)), True]
+            ok = all(c.is_valid(*cargs) for c in cstr)
+            dp[(rem, cstr)] = (dm, cm, 1.0 if ok else 0.0, 1 if ok else 0)
 
-            # vectorized fixed-constraint check across all surviving distributions at once
-            for constraint in fixed_constraints:
-                valid_mask[valid_mask] &= constraint.vectorized_is_valid(
-                    wire_rank_index=wire_array_index,
-                    remaining_wires=remaining_wires,
-                    distributions=dist_array[valid_mask],
-                    is_terminal_array=None,
-                )
+        for k in range(n_wire_types - 1, -1, -1):
+            is_last = (k == n_wire_types - 1)
+            lower, upper = int(lower_wire_array_limits[k]), int(upper_wire_array_limits[k])
+            for (rem, cstr) in states_per_level[k]:
+                dm = [np.zeros((rem[p], n_wire_types), dtype=np.float64) for p in range(n_players)]
+                cm = [np.zeros((n_wire_types, 4), dtype=np.float64) for p in range(n_players)]
+                weight, combos = 0.0, 0
+                rem_arr = np.array(rem, dtype=np.int32)
+                for num_wires in range(lower, upper + 1):
+                    dist_array, counts_array = get_single_wire_rank_distributions(num_wires, n_players)
+                    valid_mask = ~np.any(dist_array > rem_arr, axis=1)
+                    for constraint in fixed_constraints:
+                        valid_mask[valid_mask] &= constraint.vectorized_is_valid(k, rem, dist_array[valid_mask], None)
+                    for idx in np.where(valid_mask)[0]:
+                        dist = dist_array[idx]
+                        count = int(counts_array[idx])
+                        cargs = [k, rem, dist, False]
+                        if cstr and any(not c.is_valid(*cargs) for c in cstr):
+                            continue
+                        new_cstr = tuple(c.mutate_constraint(*cargs) for c in cstr) if cstr else cstr
+                        new_rem = tuple((rem_arr - dist).tolist())
+                        sub = dp[(new_rem, new_cstr)]
+                        if sub[2] == 0:
+                            continue
+                        cur_weight = count * sub[2]
+                        weight += cur_weight
+                        combos += sub[3]
+                        for p in range(n_players):
+                            wpf = int(dist[p])
+                            if not is_last:
+                                dm[p][wpf:] += sub[0][p] * count
+                                cm[p] += sub[1][p] * count
+                            if wpf > 0:
+                                dm[p][:wpf, k] += cur_weight
+                                cm[p][k, wpf - 1] += cur_weight
+                dp[(rem, cstr)] = (dm, cm, weight, combos)
+            for key in states_per_level[k + 1]:
+                del dp[key]
 
-            # for each of the valid indices
-            for idx in np.where(valid_mask)[0]:
-                wire_distribution = dist_array[idx]
-                count = int(counts_array[idx])
+        return dp[(initial_remaining, initial_constraints)]
 
-                # per-distribution check only for mutating constraints
-                constraint_args = [wire_array_index, remaining_wires, wire_distribution, False]
-                if cur_mutating_constraints:
-                    if any(not c.is_valid(*constraint_args) for c in cur_mutating_constraints):
-                        continue
-
-                # construct the mutating constraints
-                recursive_constraints = []
-                for constraint in cur_mutating_constraints:
-                    recursive_constraints.append(constraint.mutate_constraint(*constraint_args))
-
-                # recursive case, compute sub cases
-                sub_results = compute_probability_matrices_helper(
-                    remaining_wires = tuple(r - d for r, d in zip(remaining_wires, wire_distribution)),
-                    wire_array_index=wire_array_index + 1,
-                    cur_mutating_constraints=tuple(recursive_constraints),
-                )
-
-                # if the sub results are impossible, continue
-                if sub_results[2] == 0:
-                    continue
-
-                cur_weight = count * sub_results[2]
-                weight += cur_weight
-                combinations += sub_results[3]
-
-                for index, wires_for_player in enumerate(wire_distribution):
-                    if wire_array_index != len(upper_wire_array_limits) - 1:
-                        wire_density_matrices[index][wires_for_player:] += sub_results[0][index] * count
-                        wire_count_matrices[index] += sub_results[1][index] * count
-                    if wires_for_player > 0:
-                        wire_density_matrices[index][:wires_for_player, wire_array_index] += cur_weight
-                        wire_count_matrices[index][wire_array_index, wires_for_player - 1] += cur_weight
-
-        return wire_density_matrices, wire_count_matrices, weight, combinations
-
-    helper_results = compute_probability_matrices_helper(
-        remaining_wires=tuple(wire_limits_per_player),
-        wire_array_index=0,
-        cur_mutating_constraints=tuple(mutating_constraints),
-    )
+    helper_results = compute_probability_matrices_dp()
 
     for player_index in range(num_players):
         # normalize the helper matrix weights
