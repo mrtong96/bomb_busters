@@ -6,6 +6,7 @@ from typing import Optional, Iterator
 from collections import Counter, defaultdict
 
 import numpy as np
+from numba import njit
 
 from src.constraints2 import Constraint, SubsetConstraint, IndicatorConstraint
 
@@ -190,6 +191,87 @@ def _accumulate_base_case(
     combinations_tensor[nonzero_placement_indices, nonzero_player_indices, wire_array_index, nonzero_distribution_values] += nonzero_counts
 
 
+@njit(cache=True)
+def _accumulate_recursive_case_jit(
+    distributions: np.ndarray,         # (num_dists, num_players) int8
+    counts: np.ndarray,                 # (num_dists,) int32
+    wire_array_index: int,
+    wire_placements_matrix: np.ndarray, # (num_placements, num_players) int8
+    prev_placement_lookup: np.ndarray,  # (max_encoded_key + 1,) int32
+    encoding_powers: np.ndarray,        # (num_players,) int64
+    prev_density: np.ndarray,           # (num_prev, num_players, max_wires, num_wire_types) float64
+    prev_combinations_tensor: np.ndarray, # (num_prev, num_players, num_wire_types, 4) float64
+    prev_combinations: np.ndarray,      # (num_prev,) float64
+    prev_weight: np.ndarray,            # (num_prev,) float64
+    constraint_matrix: np.ndarray,      # (num_players, num_wire_types, max_wires+1, 5) bool; ignored if not has_constraint
+    has_constraint: bool,
+    density_tensor: np.ndarray,         # (num_placements, num_players, max_wires, num_wire_types) float64 — mutated
+    combinations_tensor: np.ndarray,    # (num_placements, num_players, num_wire_types, 4) float64 — mutated
+    weight: np.ndarray,                 # (num_placements,) float64 — mutated
+    combinations: np.ndarray,           # (num_placements,) float64 — mutated
+) -> None:
+    num_placements = wire_placements_matrix.shape[0]
+    num_players    = wire_placements_matrix.shape[1]
+    num_dists      = distributions.shape[0]
+    max_wires      = density_tensor.shape[2]
+    num_wire_types = density_tensor.shape[3]
+
+    prev_filled_buf = np.empty(num_players, dtype=np.int64)
+
+    for d_idx in range(num_dists):
+        cur_count_f = float(counts[d_idx])
+
+        for p_idx in range(num_placements):
+            # Capacity check: compute prev_filled for each player, bail early if any is negative
+            valid = True
+            prev_key = np.int64(0)
+            for player in range(num_players):
+                pf = np.int64(wire_placements_matrix[p_idx, player]) - np.int64(distributions[d_idx, player])
+                if pf < 0:
+                    valid = False
+                    break
+                prev_filled_buf[player] = pf
+                prev_key += pf * encoding_powers[player]
+            if not valid:
+                continue
+
+            prev_idx = prev_placement_lookup[prev_key]
+
+            # Indicator constraint check
+            if has_constraint:
+                constraint_valid = True
+                for player in range(num_players):
+                    nw = int(distributions[d_idx, player])
+                    if not constraint_matrix[player, wire_array_index, prev_filled_buf[player], nw]:
+                        constraint_valid = False
+                        break
+                if not constraint_valid:
+                    continue
+
+            contribution = cur_count_f * prev_weight[prev_idx]
+            weight[p_idx]       += contribution
+            combinations[p_idx] += prev_combinations[prev_idx]
+
+            # Dot-product: accumulate scaled previous-level tensors into current level
+            for player in range(num_players):
+                for slot in range(max_wires):
+                    for t in range(num_wire_types):
+                        density_tensor[p_idx, player, slot, t] += prev_density[prev_idx, player, slot, t] * cur_count_f
+                for t in range(num_wire_types):
+                    for k in range(4):
+                        combinations_tensor[p_idx, player, t, k] += prev_combinations_tensor[prev_idx, player, t, k] * cur_count_f
+
+            # Scatter: write current wire rank's contribution into the appropriate slots
+            for player in range(num_players):
+                nw = int(distributions[d_idx, player])
+                if nw == 0:
+                    continue
+                pf = int(prev_filled_buf[player])
+                for slot_offset in range(nw):
+                    density_tensor[p_idx, player, pf + slot_offset, wire_array_index] += contribution
+                combinations_tensor[p_idx, player, wire_array_index, nw - 1] += contribution
+
+
 def _accumulate_recursive_case(
     distributions: np.ndarray,
     counts: np.ndarray,
@@ -207,7 +289,7 @@ def _accumulate_recursive_case(
 ) -> None:
     """
     Recursive case accumulation (subsequent wire ranks in a subset).
-    For each distribution, vectorizes over all valid placements using the previous level's state.
+    Prepares array inputs and delegates to the JIT-compiled inner function.
     Mutates density_tensor, combinations_tensor, weight, and combinations in-place.
     """
     prev_placements_matrix = prev_info[1]
@@ -219,66 +301,20 @@ def _accumulate_recursive_case(
     prev_placement_lookup   = np.full(int(prev_placements_encoded.max()) + 1, -1, dtype=np.int32)
     prev_placement_lookup[prev_placements_encoded] = np.arange(len(prev_placements_matrix), dtype=np.int32)
 
-    # Outer loop: distributions (small). Inner: vectorized over all placements.
-    for cur_distribution, cur_count in zip(distributions, counts):
-        # Capacity check: vectorized over all placements at once
-        prev_filled_per_placement = wire_placements_matrix - cur_distribution[None, :]  # (num_placements, num_players)
-        capacity_valid_mask = np.all(prev_filled_per_placement >= 0, axis=1)
-        if not np.any(capacity_valid_mask):
-            continue
+    if indicator_constraint is not None:
+        constraint_matrix = indicator_constraint.constraint_matrix.astype(np.bool_)
+        has_constraint = True
+    else:
+        constraint_matrix = np.empty((0, 0, 0, 0), dtype=np.bool_)
+        has_constraint = False
 
-        valid_placement_indices = np.where(capacity_valid_mask)[0]               # (num_valid,)
-        valid_prev_filled       = prev_filled_per_placement[capacity_valid_mask]  # (num_valid, num_players)
-        prev_placement_indices  = prev_placement_lookup[(valid_prev_filled.astype(np.int64) @ encoding_powers)]  # (num_valid,)
-
-        # Vectorized constraint check across all valid placements
-        if indicator_constraint:
-            constraint_valid_mask = np.all(
-                indicator_constraint.constraint_matrix[
-                    player_range[None, :],          # (1, num_players) → (num_valid, num_players)
-                    wire_array_index,
-                    valid_prev_filled,              # (num_valid, num_players)
-                    cur_distribution[None, :],      # (1, num_players) → (num_valid, num_players)
-                ],
-                axis=1,
-            )
-            if not np.any(constraint_valid_mask):
-                continue
-            valid_placement_indices = valid_placement_indices[constraint_valid_mask]
-            prev_placement_indices  = prev_placement_indices[constraint_valid_mask]
-            valid_prev_filled       = valid_prev_filled[constraint_valid_mask]
-
-        prev_weights  = prev_info[5][prev_placement_indices]   # (num_valid,)
-        contributions = cur_count * prev_weights                # (num_valid,)
-
-        # 1D accumulations (valid_placement_indices unique within one distribution)
-        weight[valid_placement_indices]       += contributions
-        combinations[valid_placement_indices] += prev_info[4][prev_placement_indices]
-
-        # Dot-product tensor updates (unique placement indices → direct indexing safe)
-        density_tensor[valid_placement_indices]      += prev_info[2][prev_placement_indices] * cur_count
-        combinations_tensor[valid_placement_indices] += prev_info[3][prev_placement_indices] * cur_count
-
-        # Scatter update for current wire rank
-        total_wires_in_distribution = int(np.sum(cur_distribution))
-        if total_wires_in_distribution > 0:
-            player_indices_for_distribution = np.repeat(player_range, cur_distribution)                    # (total_wires,)
-            wire_slot_offsets               = np.concatenate([np.arange(el) for el in cur_distribution])  # (total_wires,)
-            # wire_slot_offsets_2d[v, s] = valid_prev_filled[v, player_indices_for_distribution[s]] + wire_slot_offsets[s]
-            wire_slot_offsets_2d = valid_prev_filled[:, player_indices_for_distribution] + wire_slot_offsets[None, :]  # (num_valid, total_wires)
-            # all (placement, player, slot) triples are unique → direct indexing
-            density_tensor[
-                valid_placement_indices[:, None], player_indices_for_distribution[None, :], wire_slot_offsets_2d, wire_array_index
-            ] += contributions[:, None]
-
-            nonzero_players = np.where(cur_distribution > 0)[0]  # (num_nonzero,)
-            if len(nonzero_players) > 0:
-                combinations_tensor[
-                    valid_placement_indices[:, None],
-                    nonzero_players[None, :],
-                    wire_array_index,
-                    (cur_distribution[nonzero_players] - 1)[None, :],
-                ] += contributions[:, None]
+    _accumulate_recursive_case_jit(
+        distributions, counts, wire_array_index,
+        wire_placements_matrix, prev_placement_lookup, encoding_powers,
+        prev_info[2], prev_info[3], prev_info[4], prev_info[5],
+        constraint_matrix, has_constraint,
+        density_tensor, combinations_tensor, weight, combinations,
+    )
 
 
 def compute_probability_matrices(
