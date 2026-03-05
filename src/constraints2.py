@@ -70,35 +70,6 @@ class IndicatorConstraint(Constraint):
                           wire_distribution
                       ])
 
-    #     # for player_index, (r, d) in enumerate(zip(remaining_wires, wire_distribution)):
-    #     #     if not self.constraint_matrix[player_index, wire_rank_index, r, d]:
-    #     #         return False
-    #     # return True
-    #
-    # def vectorized_is_valid(
-    #         self,
-    #         wire_rank_index: int,
-    #         remaining_wires: tuple[int, ...],
-    #         distributions: np.ndarray,
-    #         is_terminal_array: Optional[tuple[bool, ...]],
-    # ) -> np.ndarray:
-    #     """
-    #     Vectorized validity check across all distributions at once.
-    #
-    #     Args:
-    #         wire_rank_index: current wire type index
-    #         remaining_wires: remaining wire slots per player
-    #         distributions: (N, n_players) int32 array of candidate distributions
-    #         is_terminal_array: array of is_terminal values. Ignored for this method
-    #
-    #     Returns:
-    #         Boolean mask of shape (N,) — True where the distribution is valid.
-    #     """
-    #     mask = np.ones(len(distributions), dtype=np.bool_)
-    #     for player_index, player_wires in enumerate(remaining_wires):
-    #         mask &= self.constraint_matrix[player_index, wire_rank_index, player_wires, distributions[:, player_index]]
-    #     return mask
-
 class SubsetConstraint(Constraint):
     """
     Meant to represent yellow/red wires

@@ -10,7 +10,7 @@ from numba import njit
 
 from src.constraints2 import Constraint, SubsetConstraint, IndicatorConstraint
 
-
+@functools.cache
 def get_wire_placements(max_wires, wires, players) -> Iterator[tuple[int, ...]]:
     """
     Returns an iterator to go through all possible tuples of distributing wires to players
@@ -33,7 +33,7 @@ def get_wire_placements(max_wires, wires, players) -> Iterator[tuple[int, ...]]:
             for remainder in get_wire_placement_helper(helper_wires - num_wires, helper_players - 1):
                 yield (num_wires,) + remainder
 
-    return get_wire_placement_helper(wires, players)
+    return tuple(get_wire_placement_helper(wires, players))
 
 @functools.cache
 def get_single_wire_rank_distributions(num_wires: int, num_players: int) -> tuple:
@@ -218,10 +218,12 @@ def _accumulate_recursive_case_jit(
 
     prev_filled_buf = np.empty(num_players, dtype=np.int64)
 
-    for d_idx in range(num_dists):
-        cur_count_f = float(counts[d_idx])
+    # p_idx outer so density_tensor[p_idx] stays in L1 across all d_idx iterations;
+    # d_idx inner reads at most num_dists (~70) prev_density slices (~336 KB, fits in L2)
+    for p_idx in range(num_placements):
+        for d_idx in range(num_dists):
+            cur_count_f = float(counts[d_idx])
 
-        for p_idx in range(num_placements):
             # Capacity check: compute prev_filled for each player, bail early if any is negative
             valid = True
             prev_key = np.int64(0)
@@ -272,21 +274,10 @@ def _accumulate_recursive_case_jit(
                 combinations_tensor[p_idx, player, wire_array_index, nw - 1] += contribution
 
 
-def _accumulate_recursive_case(
-    distributions: np.ndarray,
-    counts: np.ndarray,
-    wire_array_index: int,
-    wire_placements_matrix: np.ndarray,
-    prev_info: tuple,
-    wire_limits_per_player: np.ndarray,
-    num_players: int,
-    player_range: np.ndarray,
-    indicator_constraint,
-    density_tensor: np.ndarray,
-    combinations_tensor: np.ndarray,
-    weight: np.ndarray,
-    combinations: np.ndarray,
-) -> None:
+def _accumulate_recursive_case(distributions: np.ndarray, counts: np.ndarray, wire_array_index: int,
+                               wire_placements_matrix: np.ndarray, prev_info: tuple, wire_limits_per_player: np.ndarray,
+                               num_players: int, indicator_constraint, density_tensor: np.ndarray,
+                               combinations_tensor: np.ndarray, weight: np.ndarray, combinations: np.ndarray) -> None:
     """
     Recursive case accumulation (subsequent wire ranks in a subset).
     Prepares array inputs and delegates to the JIT-compiled inner function.
@@ -381,12 +372,10 @@ def compute_probability_matrices(
                     density_tensor, combinations_tensor, weight, combinations,
                 )
             else:
-                _accumulate_recursive_case(
-                    distributions, counts, wire_array_index,
-                    wire_placements_matrix, wire_placement_dict[prev_wire_subset_key],
-                    wire_limits_per_player, num_players, player_range, indicator_constraint,
-                    density_tensor, combinations_tensor, weight, combinations,
-                )
+                _accumulate_recursive_case(distributions, counts, wire_array_index, wire_placements_matrix,
+                                           wire_placement_dict[prev_wire_subset_key], wire_limits_per_player,
+                                           num_players, indicator_constraint, density_tensor, combinations_tensor,
+                                           weight, combinations)
 
             wire_placement_dict[wire_subset_key] = (
                 wire_placement_mapping,
@@ -516,7 +505,7 @@ def sanity_combination_checks():
                     assert False, ('failed symmetry', combinations_matrix)
 
         shannon_entropy = 0
-        for player_data in density_matrix:
+        for player_data in density_matrix[0:1, :, :]:
             for row in player_data:
                 for el in row:
                     if el == 0:
