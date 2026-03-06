@@ -222,8 +222,6 @@ def _accumulate_recursive_case_jit(
     num_placements = wire_placements_matrix.shape[0]
     num_players    = wire_placements_matrix.shape[1]
     num_dists      = distributions.shape[0]
-    max_wires      = density_tensor.shape[2]
-    num_wire_types = density_tensor.shape[3]
 
     prev_filled_buf = np.empty(num_players, dtype=np.int64)
 
