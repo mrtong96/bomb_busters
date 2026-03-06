@@ -10,7 +10,7 @@ from numba import njit
 from src.constraints2 import Constraint, SubsetConstraint, IndicatorConstraint
 
 @functools.cache
-def get_wire_placements(max_wires, wires, players) -> Iterator[tuple[int, ...]]:
+def get_wire_placements(max_wires, wires, players) -> tuple[tuple[int, ...]]:
     """
     Returns an iterator to go through all possible tuples of distributing wires to players
 
@@ -22,7 +22,7 @@ def get_wire_placements(max_wires, wires, players) -> Iterator[tuple[int, ...]]:
     """
     limits = [(max_wires + players - i - 1) // players for i in range(players)]
 
-    def get_wire_placement_helper(helper_wires, helper_players):
+    def get_wire_placement_helper(helper_wires, helper_players) -> tuple[tuple[int, ...]]:
         if helper_players == 1:
             if (wires == max_wires and helper_wires == limits[-1]) or helper_wires <= limits[-1]:
                 yield(helper_wires,)
@@ -83,10 +83,12 @@ def get_wire_combinations(
         if sum(counts) != total_wires:
             continue
 
+        non_zero_wires = [wire for wire, count in combo if count > 0]
+
         # check each subset constraint
         passes_subset_constraints = True
         for subset_constraint in subset_constraints:
-            if len(set(subset_constraint.wires).intersection(wires)) != subset_constraint.num_wires:
+            if len(set(subset_constraint.wires).intersection(non_zero_wires)) != subset_constraint.num_wires:
                 passes_subset_constraints = False
                 break
         if not passes_subset_constraints:
@@ -106,12 +108,12 @@ def get_wire_placement_key(wire_subset: tuple[tuple[int, int], ...], constraints
     """
     subset_constraints = [constraint for constraint in constraints if isinstance(constraint, SubsetConstraint)]
 
-    wires, counts = list(zip(*wire_subset))
+    subset_wires, counts = list(zip(*wire_subset))
     tuple_args = [len(wire_subset), sum(counts), counts[-1]]
     for constraint in subset_constraints:
-        wires = tuple(sorted(constraint.wires))
-        wire_intersection = tuple(sorted(set(constraint.wires).intersection(wires)))
-        tuple_args.append((wires, wire_intersection))
+        constraint_wires = tuple(sorted(constraint.wires))
+        wire_intersection = tuple(sorted(set(constraint.wires).intersection(subset_wires)))
+        tuple_args.append((constraint_wires, wire_intersection))
     return tuple(tuple_args)
 
 def build_wire_key_mapping(wire_subsets: set[tuple[tuple[int, int], ...]], constraints: list[Constraint]) -> dict:
@@ -122,16 +124,16 @@ def build_wire_key_mapping(wire_subsets: set[tuple[tuple[int, int], ...]], const
     :param constraints: all the constraints
     :return: map of (wire_subset_key: [tuple[num_wires, prev_wire_subset_key], ...])
     """
-    wire_key_mapping = defaultdict(list)
+    wire_key_mapping = defaultdict(set)
 
     for wire_subset in wire_subsets:
         wire_subset_key = get_wire_placement_key(wire_subset, constraints)
         wires, counts = list(zip(*wire_subset))
 
         prev_wire_subset_key = None if len(wire_subset) == 1 else get_wire_placement_key(wire_subset[:-1], constraints)
-        wire_key_mapping[wire_subset_key].append((prev_wire_subset_key, wires[-1]))
+        wire_key_mapping[wire_subset_key].add((prev_wire_subset_key, wires[-1]))
 
-    return wire_key_mapping
+    return {k: list(v) for k, v in wire_key_mapping.items()}
 
 def _accumulate_base_case(
     distributions: np.ndarray,
@@ -164,6 +166,14 @@ def _accumulate_base_case(
         valid_counts = counts[constraint_valid_mask]
     else:
         valid_distributions, valid_counts = distributions, counts
+
+    if len(valid_distributions) == 0:
+        return
+
+    # Filter out distributions that exceed per-player capacity (not in mapping)
+    capacity_mask = np.array([tuple(d) in wire_placement_mapping for d in valid_distributions])
+    valid_distributions = valid_distributions[capacity_mask]
+    valid_counts = valid_counts[capacity_mask]
 
     if len(valid_distributions) == 0:
         return

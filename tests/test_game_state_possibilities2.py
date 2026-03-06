@@ -2,7 +2,7 @@ import time
 
 import numpy as np
 
-from src.constraints2 import Constraint, IndicatorConstraint
+from src.constraints2 import Constraint, IndicatorConstraint, SubsetConstraint
 from src.game_state_possibilities2 import compute_probability_matrices
 
 
@@ -44,7 +44,7 @@ def test_sanity_combination_checks():
         if np.isclose(np.sum(density_matrix), 48):
             assert np.isclose(23.076475108967493, shannon_entropy), shannon_entropy
 
-def test_constraint_tests():
+def test_constraints():
     wires = 4
 
     t0 = time.time()
@@ -72,10 +72,8 @@ def test_constraint_tests():
 
     # print(time.time() - t0)
 
-def test_constraint_tests2():
+def test_constraints2():
     wires = 12
-
-    t0 = time.time()
 
     # compute the wire limits per player and the individual wire limits for the remaining cards
     wire_limits_per_player = np.array([((wires * 4) + 4 - i) // 5 for i in range(5)])
@@ -97,8 +95,49 @@ def test_constraint_tests2():
             constraints=[indicator_constraint],
         )
 
+def test_subset_constraints():
+    # 4 blue wires, 2/3 yellow, 1/2 red
+    blue_wires = [(i+1) * 10 for i in range(4)]
+    yellow_wires = [21, 51, 71]
+    red_wires = [55, 85]
+
+    total_wires = len(blue_wires) * 4 + 3
+    wire_limits_per_player = np.array([(total_wires + 4 - i) // 5 for i in range(5)], dtype=np.int32)
+    wire_ranks = sorted(blue_wires + yellow_wires + red_wires)
+    wire_map = {wire: i for i, wire in enumerate(wire_ranks)}
+    wire_ranks_mapped = list(range(len(wire_ranks)))
+    yellow_wires_mapped = [wire_map[el] for el in sorted(yellow_wires)]
+    red_wires_mapped = [wire_map[el] for el in sorted(red_wires)]
+    yellow_subset = SubsetConstraint(wire_limits_per_player, wire_ranks_mapped, yellow_wires_mapped, 2)
+    red_subset = SubsetConstraint(wire_limits_per_player, wire_ranks_mapped, red_wires_mapped, 1)
+
+    wire_limits = {i: (4, 4) if wire in blue_wires else (0, 1) for i, wire in enumerate(wire_ranks)}
+
+    results = compute_probability_matrices(
+        wire_limits_per_player=wire_limits_per_player,
+        wire_limits=wire_limits,
+        constraints=[yellow_subset, red_subset],
+    )
+
+    for i in range(results[0].shape[2]):
+        wire_rank = wire_ranks[i]
+        wire_sum = np.sum(results[0][:, :, i])
+
+        # blue wires have 4 count
+        if wire_rank in blue_wires:
+            assert np.isclose(wire_sum, 4)
+        # yellow wires should be 2/3 chance each
+        elif wire_rank in yellow_wires:
+            assert np.isclose(wire_sum, 2.0 / 3.0), wire_sum
+        # red wires should be 1/2 chance each
+        elif wire_rank in red_wires:
+            assert np.isclose(wire_sum, 1.0 / 2.0), wire_sum
+        else:
+            assert False, 'some other rank'
+
 
 if __name__ == "__main__":
     test_sanity_combination_checks()
-    test_constraint_tests()
-    test_constraint_tests2()
+    test_constraints()
+    test_constraints2()
+    test_subset_constraints()
