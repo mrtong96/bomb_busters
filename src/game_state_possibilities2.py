@@ -265,10 +265,11 @@ def _accumulate_recursive_case_jit(
 
             # Dot-product: accumulate scaled previous-level tensors into current level
             for player in range(num_players):
-                for slot in range(max_wires):
-                    for t in range(num_wire_types):
+                # only iterate through the subset of the density/combination tensors that are non-zero
+                for slot in range(int(prev_filled_buf[player])):
+                    for t in range(wire_array_index):
                         density_tensor[p_idx, player, slot, t] += prev_density[prev_idx, player, slot, t] * cur_count_f
-                for t in range(num_wire_types):
+                for t in range(wire_array_index):
                     for k in range(4):
                         combinations_tensor[p_idx, player, t, k] += prev_combinations_tensor[prev_idx, player, t, k] * cur_count_f
 
