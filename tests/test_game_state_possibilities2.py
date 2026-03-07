@@ -2,8 +2,8 @@ import time
 
 import numpy as np
 
-from src.constraints2 import Constraint, IndicatorConstraint, SubsetConstraint
-from src.game_state_possibilities2 import compute_probability_matrices
+from src.constraints import Constraint, IndicatorConstraint, SubsetConstraint
+from src.game_state_possibilities import compute_probability_matrices
 
 
 def test_sanity_combination_checks():
