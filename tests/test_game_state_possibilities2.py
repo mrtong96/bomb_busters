@@ -47,8 +47,6 @@ def test_sanity_combination_checks():
 def test_constraints():
     wires = 4
 
-    t0 = time.time()
-
     # compute the wire limits per player and the individual wire limits for the remaining cards
     wire_limits_per_player = np.array([((wires * 4) + 4 - i) // 5 for i in range(5)])
     wire_limits = {i: (4, 4) for i in range(wires)}

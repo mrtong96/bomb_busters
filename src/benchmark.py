@@ -4,7 +4,7 @@ from src.constraints2 import SubsetConstraint
 from src.game_state_possibilities2 import compute_probability_matrices
 
 
-def make_args():
+def make_kwargs():
     blue_wires = [(i+1) * 10 for i in range(12)]
     yellow_wires = [21, 51, 71]
     red_wires = [55, 85]
@@ -18,20 +18,24 @@ def make_args():
     yellow_subset = SubsetConstraint(wire_limits_per_player, wire_ranks_mapped, yellow_wires_mapped, 2)
     red_subset = SubsetConstraint(wire_limits_per_player, wire_ranks_mapped, red_wires_mapped, 1)
     wire_limits = {i: (4, 4) if wire in blue_wires else (0, 1) for i, wire in enumerate(wire_ranks)}
-    return wire_limits_per_player, wire_limits, [yellow_subset, red_subset]
+    return {
+        'wire_limits_per_player': wire_limits_per_player,
+        'wire_limits': wire_limits,
+        'constraints': [yellow_subset, red_subset]
+    }
 
 
 if __name__ == '__main__':
-    wlp, wl, c = make_args()
+    kwargs = make_kwargs()
 
     # warm up numba + caches
-    compute_probability_matrices(wire_limits_per_player=wlp, wire_limits=wl, constraints=c)
+    compute_probability_matrices(**kwargs)
 
     N = 20
     times = []
     for _ in range(N):
         t0 = time.perf_counter()
-        compute_probability_matrices(wire_limits_per_player=wlp, wire_limits=wl, constraints=c)
+        compute_probability_matrices(**kwargs)
         times.append(time.perf_counter() - t0)
 
     times_ms = [t * 1000 for t in times]

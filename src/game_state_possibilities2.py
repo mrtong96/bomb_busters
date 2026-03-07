@@ -1,7 +1,7 @@
 # now that we wrote the first one write the other one but (hopefully) way faster
 import functools
 import itertools
-from typing import Optional, Iterator
+from typing import Optional
 from collections import Counter, defaultdict
 
 import numpy as np
@@ -424,4 +424,3 @@ def compute_probability_matrices(
 
     # done
     return density_matrix, combinations_matrix, combinations[0], weight[0]
-
