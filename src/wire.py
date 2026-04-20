@@ -6,7 +6,15 @@ YELLOW = 1
 RED = 5
 
 class Wire:
-    def __init__(self, raw_int: Optional[int] = None, rank: int=1, color='blue'):
+    def __init__(self, raw_int: Optional[int] = None, rank: int=0, color='blue'):
+        """
+
+        Args:
+            raw_int: integer representing the rank of the wire, can be optional
+            rank: 0 represents unspecified, otherwise can be anywhere in the range of 1-12 for blue,
+                1-11 for yellow and red
+            color: red/yellow/blue
+        """
         if raw_int is None:
             self.rank = rank
             if isinstance(color, str):

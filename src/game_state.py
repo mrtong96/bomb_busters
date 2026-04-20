@@ -1,4 +1,5 @@
 # keep track of the game state
+from collections import Counter
 from typing import Optional
 
 import numpy as np
@@ -56,6 +57,10 @@ class GameState:
 
         # basic wire info
         self.player_wires = []
+        self.revealed_wires = []
+        self.wire_ranks = []  # list of all the wire ranks available sorted
+        self.wire_counts = []  # list of all the counts per wire in the deck
+        self.wire_revealed_counts = []  # list of all the counts per wire that are revealed among the players
         self.wire_limits_per_player = []
         # used for probability_utils calls
         self.wire_to_index_mapping = {}
@@ -80,6 +85,13 @@ class GameState:
         wires = blue_wires + yellow_wires + red_wires
         np.random.shuffle(wires)
 
+        # get the counts of wires
+        wire_counts = Counter(wires)
+        for wire, count in sorted(wire_counts.items()):
+            self.wire_ranks.append(wire)
+            self.wire_counts.append(count)
+            self.wire_revealed_counts.append(0)
+
         # deal them out to each player
         self.wire_limits_per_player = np.array([(len(wires) + 4 - i) // 5 for i in range(5)])
         cum_sum_wire_limits = np.cumsum(self.wire_limits_per_player)
@@ -88,11 +100,11 @@ class GameState:
             cur_player_wires = wires[start_index: start_index + self.wire_limits_per_player[player_index]]
             cur_player_wires = sorted(cur_player_wires)
             self.player_wires.append(cur_player_wires)
+            self.revealed_wires.append([False] * len(cur_player_wires))
 
         # update the maps
         wire_raw_ints = sorted(set([wire.raw_int for wire in wires]))
         self.wire_to_index_mapping = {Wire(raw_int=raw_int): i for i, raw_int in enumerate(wire_raw_ints)}
-
 
         # add subset constraints
         zip_data = [(self.yellow_wires, self.yellow_wires_in_hands), (self.red_wires, self.red_wires_in_hands)]
@@ -106,6 +118,23 @@ class GameState:
                 )
                 self.subset_constraints.append(subset_constraint)
 
+    @property
+    def is_start_of_turn(self) -> bool:
+        if self.most_recent_turn is None:
+            return True
+        return self.most_recent_decision.is_turn_ending_decision
+
+    @property
+    def most_recent_decision(self) -> Optional[Decision]:
+        if self.most_recent_turn is None:
+            return None
+        return self.most_recent_turn[-1]
+
+    @property
+    def most_recent_turn(self) -> Optional[list[Decision]]:
+        if len(self.turns) == 0:
+            return None
+        return self.turns[-1]
 
     @property
     def has_won(self) -> bool:
