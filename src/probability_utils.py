@@ -1,4 +1,5 @@
-# now that we wrote the first one write the other one but (hopefully) way faster
+# Way to do combinatorics math to compute the probability that certain wire configurations exist
+# Note this assumes that each player plays randomly (i.e. no logic based on players behaving a certain way)
 import functools
 import itertools
 from typing import Optional

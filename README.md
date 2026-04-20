@@ -1,9 +1,9 @@
-Overall goals
+### Overall goals
 * Figure out how to maximize win percentage chance in increasingly complicated scenarios
 * Be able to make decisions conditioned on the fact that other players make suboptimal and non-random decisions
 * Make sure that all the calculations can be run in real-time ish (<1 min or less per decision) from a laptop
 
-Random notes/thoughts
+### Random notes/thoughts
 * The blue wires really behave like cards with no suit.
   * There are only 12 ranks instead of 13 but it's close enough
   * Red/Yellow wires slightly break this assumption
@@ -26,4 +26,11 @@ Random notes/thoughts
     * You can probably do some conditional probability with log(p(making_moves | hand)) for each player
     * Might need a temperature parameter to factor in "human randomness"
 
+### Sketch of how the probability_utils works
 
+
+
+### Notes
+
+Rewrite constraints to have static matrix (indicator constraints) and the subset constraints
+Implement logic to start playing the game with some basic rules (no equipment)

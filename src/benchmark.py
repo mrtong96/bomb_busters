@@ -1,7 +1,7 @@
 import time
 import numpy as np
 from src.constraints import SubsetConstraint
-from src.game_state_possibilities import compute_probability_matrices
+from src.probability_utils import compute_probability_matrices
 
 
 def make_kwargs():

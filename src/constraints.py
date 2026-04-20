@@ -52,6 +52,7 @@ class IndicatorConstraint(Constraint):
                             elif self.constraints[player_index][index] != self.wire_ranks[wire_rank_index]:
                                 satisfies_constraint = False
                         self.constraint_matrix[player_index, wire_rank_index, prefilled_wires, num_wires] = satisfies_constraint
+
     def is_valid(
             self,
             wire_rank_index: int,
