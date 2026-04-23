@@ -142,7 +142,7 @@ def _accumulate_base_case(
     wire_array_index: int,
     wire_placement_mapping: dict,
     player_range: np.ndarray,
-    constraint_matrix: Optional[np.ndarray],
+    constraint_matrix: np.ndarray,
     density_tensor: np.ndarray,
     combinations_tensor: np.ndarray,
     weight: np.ndarray,
@@ -153,20 +153,17 @@ def _accumulate_base_case(
     Prev-filled slots are all zero, so distributions map directly to placement indices.
     Mutates density_tensor, combinations_tensor, weight, and combinations in-place.
     """
-    if constraint_matrix is not None:
-        constraint_valid_mask = np.all(
-            constraint_matrix[
-                player_range[None, :],  # (1, num_players) broadcast to (num_distributions, num_players)
-                wire_array_index,
-                0,                      # prefilled = 0 in base case
-                distributions,          # (num_distributions, num_players)
-            ],
-            axis=1,
-        )
-        valid_distributions = distributions[constraint_valid_mask]
-        valid_counts = counts[constraint_valid_mask]
-    else:
-        valid_distributions, valid_counts = distributions, counts
+    constraint_valid_mask = np.all(
+        constraint_matrix[
+            player_range[None, :],  # (1, num_players) broadcast to (num_distributions, num_players)
+            wire_array_index,
+            0,                      # prefilled = 0 in base case
+            distributions,          # (num_distributions, num_players)
+        ],
+        axis=1,
+    )
+    valid_distributions = distributions[constraint_valid_mask]
+    valid_counts = counts[constraint_valid_mask]
 
     if len(valid_distributions) == 0:
         return
@@ -213,8 +210,7 @@ def _accumulate_recursive_case_jit(
     prev_combinations_tensor: np.ndarray, # (num_prev, num_players, num_wire_types, 4) float64
     prev_combinations: np.ndarray,      # (num_prev,) float64
     prev_weight: np.ndarray,            # (num_prev,) float64
-    constraint_matrix: np.ndarray,      # (num_players, num_wire_types, max_wires+1, 5) bool; ignored if not has_constraint
-    has_constraint: bool,
+    constraint_matrix: np.ndarray,      # (num_players, num_wire_types, max_wires+1, 5) bool
     density_tensor: np.ndarray,         # (num_placements, num_players, max_wires, num_wire_types) float64 — mutated
     combinations_tensor: np.ndarray,    # (num_placements, num_players, num_wire_types, 4) float64 — mutated
     weight: np.ndarray,                 # (num_placements,) float64 — mutated
@@ -247,16 +243,15 @@ def _accumulate_recursive_case_jit(
 
             prev_idx = prev_placement_lookup[prev_key]
 
-            # Indicator constraint check
-            if has_constraint:
-                constraint_valid = True
-                for player in range(num_players):
-                    nw = int(distributions[d_idx, player])
-                    if not constraint_matrix[player, wire_array_index, prev_filled_buf[player], nw]:
-                        constraint_valid = False
-                        break
-                if not constraint_valid:
-                    continue
+            # Constraint matrix check (always includes at least the wire-limit constraints)
+            constraint_valid = True
+            for player in range(num_players):
+                nw = int(distributions[d_idx, player])
+                if not constraint_matrix[player, wire_array_index, prev_filled_buf[player], nw]:
+                    constraint_valid = False
+                    break
+            if not constraint_valid:
+                continue
 
             contribution = cur_count_f * prev_weight[prev_idx]
             weight[p_idx]       += contribution
@@ -285,7 +280,7 @@ def _accumulate_recursive_case_jit(
 
 def _accumulate_recursive_case(distributions: np.ndarray, counts: np.ndarray, wire_array_index: int,
                                wire_placements_matrix: np.ndarray, prev_info: tuple, wire_limits_per_player: np.ndarray,
-                               num_players: int, constraint_matrix: Optional[np.ndarray], density_tensor: np.ndarray,
+                               num_players: int, constraint_matrix: np.ndarray, density_tensor: np.ndarray,
                                combinations_tensor: np.ndarray, weight: np.ndarray, combinations: np.ndarray) -> None:
     """
     Recursive case accumulation (subsequent wire ranks in a subset).
@@ -301,18 +296,11 @@ def _accumulate_recursive_case(distributions: np.ndarray, counts: np.ndarray, wi
     prev_placement_lookup   = np.full(int(prev_placements_encoded.max()) + 1, -1, dtype=np.int32)
     prev_placement_lookup[prev_placements_encoded] = np.arange(len(prev_placements_matrix), dtype=np.int32)
 
-    if constraint_matrix is not None:
-        constraint_matrix_typed = constraint_matrix.astype(np.bool_)
-        has_constraint = True
-    else:
-        constraint_matrix_typed = np.empty((0, 0, 0, 0), dtype=np.bool_)
-        has_constraint = False
-
     _accumulate_recursive_case_jit(
         distributions, counts, wire_array_index,
         wire_placements_matrix, prev_placement_lookup, encoding_powers,
         prev_info[2], prev_info[3], prev_info[4], prev_info[5],
-        constraint_matrix_typed, has_constraint,
+        constraint_matrix.astype(np.bool_),
         density_tensor, combinations_tensor, weight, combinations,
     )
 
@@ -337,16 +325,15 @@ def compute_probability_matrices(
     num_possible_wires = len(wire_limits)
     constraints = constraints or []
     # Non-subset constraints feed into the per-cell constraint matrix; subset constraints are applied
-    # combinatorially in get_wire_combinations / get_wire_placement_key.
+    # combinatorially in get_wire_combinations / get_wire_placement_key. The matrix is always built:
+    # when no non-subset constraints are supplied, it still encodes the per-player wire-limit constraints
+    # that get_constraint_matrix derives from wire_limits_per_player.
     non_subset_constraints = [c for c in constraints if not isinstance(c, SubsetConstraint)]
-    if non_subset_constraints:
-        constraint_matrix = get_constraint_matrix(
-            wire_limits_per_player=wire_limits_per_player,
-            wire_ranks=sorted(wire_limits.keys()),
-            constraints=non_subset_constraints,
-        )
-    else:
-        constraint_matrix = None
+    constraint_matrix = get_constraint_matrix(
+        wire_limits_per_player=wire_limits_per_player,
+        wire_ranks=sorted(wire_limits.keys()),
+        constraints=non_subset_constraints,
+    )
 
     # First compute all possible combinations of wires that can be placed via itertools product
     wire_combinations = get_wire_combinations(total_wires, wire_limits, constraints)
