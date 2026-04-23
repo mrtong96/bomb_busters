@@ -4,7 +4,7 @@ from typing import Optional
 
 import numpy as np
 
-from src.constraints import SubsetConstraint
+from src.constraint2 import SubsetConstraint
 from src.decision import Decision
 from src.wire import Wire, BLUE, YELLOW, RED
 
@@ -111,10 +111,8 @@ class GameState:
         for subset_wires, wire_count in zip_data:
             if wire_count > 0:
                 subset_constraint = SubsetConstraint(
-                    self.wire_limits_per_player,
-                    list(range(len(wire_raw_ints))),
-                    [self.wire_to_index_mapping[wire] for wire in subset_wires],
-                    wire_count,
+                    wire_rank_indexes=[self.wire_to_index_mapping[wire] for wire in subset_wires],
+                    subset_count=wire_count,
                 )
                 self.subset_constraints.append(subset_constraint)
 

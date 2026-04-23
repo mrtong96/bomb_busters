@@ -1,8 +1,21 @@
 import numpy as np
 import pytest
 
-from src.constraints import Constraint, IndicatorConstraint, SubsetConstraint
+from src.constraint2 import RankIndicatorConstraint, SubsetConstraint
 from src.probability_utils import compute_probability_matrices
+
+
+def rank_indicators_from_hand(player_index, hand, empty_sentinel=-1):
+    """Emit one RankIndicatorConstraint per filled slot in a per-player hand array."""
+    return [
+        RankIndicatorConstraint(
+            player_index=player_index,
+            wire_rank_index=int(rank),
+            indicator_location_index=position,
+        )
+        for position, rank in enumerate(hand)
+        if rank != empty_sentinel
+    ]
 
 
 @pytest.mark.parametrize(
@@ -54,17 +67,19 @@ def test_constraints():
     wire_limits_per_player = np.array([((wires * 4) + 4 - i) // 5 for i in range(5)])
     wire_limits = {i: (4, 4) for i in range(wires)}
 
-    constraints = [np.ones(limit) * Constraint.EMPTY for limit in wire_limits_per_player]
+    per_player_constraints = [np.full(limit, -1) for limit in wire_limits_per_player]
     # have one of each wire for the first player
-    constraints[0] = np.array(list(range(len(constraints[0]))))
-    wire_ranks = sorted(wire_limits.keys())
-    indicator_constraint = IndicatorConstraint(wire_limits_per_player, wire_ranks, constraints)
+    per_player_constraints[0] = np.array(list(range(len(per_player_constraints[0]))))
+    indicator_constraints = [
+        c for player_index, hand in enumerate(per_player_constraints)
+        for c in rank_indicators_from_hand(player_index, hand)
+    ]
 
     # profile things
     results = compute_probability_matrices(
         wire_limits_per_player=wire_limits_per_player,
         wire_limits=wire_limits,
-        constraints=[indicator_constraint],
+        constraints=indicator_constraints,
     )
 
     assert np.all(np.isclose(results[0][0], np.identity(wires))), (
@@ -81,19 +96,21 @@ def test_constraints2():
     wire_limits = {i: (4, 4) for i in range(wires)}
 
     for i in range(10):
-        constraints = [np.ones(limit) * Constraint.EMPTY for limit in wire_limits_per_player]
+        per_player_constraints = [np.full(limit, -1) for limit in wire_limits_per_player]
         # have one of each wire for the first player
 
         deck = np.array([i for i in range(wires) for _ in range(4)])
         hand = np.random.choice(deck, size=((wires * 4) + 4) // 5, replace=False, p=None)
-        constraints[0] = np.array(list(sorted(hand)))
-        wire_ranks = sorted(wire_limits.keys())
-        indicator_constraint = IndicatorConstraint(wire_limits_per_player, wire_ranks, constraints)
+        per_player_constraints[0] = np.array(list(sorted(hand)))
+        indicator_constraints = [
+            c for player_index, player_hand in enumerate(per_player_constraints)
+            for c in rank_indicators_from_hand(player_index, player_hand)
+        ]
         # profile things
         _ = compute_probability_matrices(
             wire_limits_per_player=wire_limits_per_player,
             wire_limits=wire_limits,
-            constraints=[indicator_constraint],
+            constraints=indicator_constraints,
         )
 
 
@@ -107,11 +124,10 @@ def test_subset_constraints():
     wire_limits_per_player = np.array([(total_wires + 4 - i) // 5 for i in range(5)], dtype=np.int32)
     wire_ranks = sorted(blue_wires + yellow_wires + red_wires)
     wire_map = {wire: i for i, wire in enumerate(wire_ranks)}
-    wire_ranks_mapped = list(range(len(wire_ranks)))
     yellow_wires_mapped = [wire_map[el] for el in sorted(yellow_wires)]
     red_wires_mapped = [wire_map[el] for el in sorted(red_wires)]
-    yellow_subset = SubsetConstraint(wire_limits_per_player, wire_ranks_mapped, yellow_wires_mapped, 2)
-    red_subset = SubsetConstraint(wire_limits_per_player, wire_ranks_mapped, red_wires_mapped, 1)
+    yellow_subset = SubsetConstraint(wire_rank_indexes=yellow_wires_mapped, subset_count=2)
+    red_subset = SubsetConstraint(wire_rank_indexes=red_wires_mapped, subset_count=1)
 
     wire_limits = {i: (4, 4) if wire in blue_wires else (0, 1) for i, wire in enumerate(wire_ranks)}
 

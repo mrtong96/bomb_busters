@@ -1,6 +1,6 @@
 import time
 import numpy as np
-from src.constraints import SubsetConstraint
+from src.constraint2 import SubsetConstraint
 from src.probability_utils import compute_probability_matrices
 
 
@@ -12,11 +12,10 @@ def make_kwargs():
     wire_limits_per_player = np.array([(total_wires + 4 - i) // 5 for i in range(5)], dtype=np.int32)
     wire_ranks = sorted(blue_wires + yellow_wires + red_wires)
     wire_map = {wire: i for i, wire in enumerate(wire_ranks)}
-    wire_ranks_mapped = list(range(len(wire_ranks)))
     yellow_wires_mapped = [wire_map[el] for el in sorted(yellow_wires)]
     red_wires_mapped = [wire_map[el] for el in sorted(red_wires)]
-    yellow_subset = SubsetConstraint(wire_limits_per_player, wire_ranks_mapped, yellow_wires_mapped, 2)
-    red_subset = SubsetConstraint(wire_limits_per_player, wire_ranks_mapped, red_wires_mapped, 1)
+    yellow_subset = SubsetConstraint(wire_rank_indexes=yellow_wires_mapped, subset_count=2)
+    red_subset = SubsetConstraint(wire_rank_indexes=red_wires_mapped, subset_count=1)
     wire_limits = {i: (4, 4) if wire in blue_wires else (0, 1) for i, wire in enumerate(wire_ranks)}
     return {
         'wire_limits_per_player': wire_limits_per_player,
