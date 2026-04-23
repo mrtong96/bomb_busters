@@ -8,7 +8,7 @@ from collections import Counter, defaultdict
 import numpy as np
 from numba import njit
 
-from src.constraint2 import Constraint, SubsetConstraint, get_constraint_matrix
+from src.constraint import Constraint, SubsetConstraint, get_constraint_matrix
 
 @functools.cache
 def get_wire_placements(max_wires, wires, players) -> tuple[tuple[int, ...]]:

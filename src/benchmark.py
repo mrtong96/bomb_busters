@@ -1,6 +1,6 @@
 import time
 import numpy as np
-from src.constraint2 import SubsetConstraint
+from src.constraint import SubsetConstraint
 from src.probability_utils import compute_probability_matrices
 
 

@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from src.constraint2 import (
+from src.constraint import (
     CountIndicatorConstraint,
     RankEqualConstraint,
     RankIndicatorConstraint,
@@ -233,6 +233,6 @@ def test_get_constraint_matrix_composes_multiple_constraints():
 
 
 def test_abstract_constraint_cannot_be_instantiated():
-    from src.constraint2 import Constraint
+    from src.constraint import Constraint
     with pytest.raises(TypeError):
         Constraint()

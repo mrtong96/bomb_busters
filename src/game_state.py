@@ -4,7 +4,7 @@ from typing import Optional
 
 import numpy as np
 
-from src.constraint2 import SubsetConstraint
+from src.constraint import SubsetConstraint
 from src.decision import Decision
 from src.wire import Wire, BLUE, YELLOW, RED
 

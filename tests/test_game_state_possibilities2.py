@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from src.constraint2 import RankIndicatorConstraint, SubsetConstraint
+from src.constraint import RankIndicatorConstraint, SubsetConstraint
 from src.probability_utils import compute_probability_matrices
 
 
