@@ -1,9 +1,13 @@
 # class of constraints
 from abc import ABC
 import numpy as np
+from typing_extensions import deprecated
 
 EMPTY = -1
 
+# TODO: migrate all the logic here to Constraint2
+
+@deprecated
 class Constraint(ABC):
     """
     Constraints for the wires
@@ -18,6 +22,7 @@ class Constraint(ABC):
         self.wire_limits_per_player = wire_limits_per_player
         self.wire_ranks = wire_ranks
 
+@deprecated
 class IndicatorConstraint(Constraint):
     """
     Meant for wires with a fixed position
@@ -53,6 +58,7 @@ class IndicatorConstraint(Constraint):
                                 satisfies_constraint = False
                         self.constraint_matrix[player_index, wire_rank_index, prefilled_wires, num_wires] = satisfies_constraint
 
+    @deprecated
     def is_valid(
             self,
             wire_rank_index: int,
