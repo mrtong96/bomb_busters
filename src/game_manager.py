@@ -40,8 +40,7 @@ class GameManager:
     def process_turn(self):
         # the first player makes a decision, record it
         cur_decision = self.players[self.game_state.player_to_move].make_decision(self.game_state)
-        self.game_state.update_constraints_from_decision(cur_decision)
-        self.game_state.turns.append([cur_decision])
+        self.game_state.process_decision(cur_decision)
 
         while not cur_decision.is_turn_ending_decision:
             if isinstance(cur_decision, DualCutDecision):
@@ -53,13 +52,10 @@ class GameManager:
             else:
                 raise NotImplementedError(f"Not implemented yet to continue from a decision {type(cur_decision)}")
 
-            self.game_state.most_recent_turn.append(cur_decision)
+            self.game_state.process_decision(cur_decision)
 
             if len(self.game_state.most_recent_turn) > 3:
                 raise RuntimeError("turns should not take more than 3 decisions")
 
         # end of turn, increment the player turn
         self.game_state.increment_player_to_move()
-
-    # def process_player_decision(self):
-    #     pass

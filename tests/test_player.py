@@ -389,3 +389,47 @@ def test_legal_decisions_after_successful_askee_returns_asker_response():
     decisions = Player(player_index=0).get_all_legal_decisions(gs)
     assert len(decisions) == 1
     assert isinstance(decisions[0], AskerResponseDecision)
+
+
+# --- make_best_entropy_decision (performance + smoke) ---
+
+def _add_rank_indicator_constraints_for_revealed_positions(gs):
+    """For each revealed (player, position), add the RankIndicatorConstraint that a real game
+    flow would have produced when that wire was revealed, so the density matrix properly
+    collapses to 0/1 at those cells."""
+    from src.constraint import RankIndicatorConstraint
+    for player_index, (hand, revealed_flags) in enumerate(zip(gs.player_wires, gs.revealed_wires)):
+        for position, (wire, revealed) in enumerate(zip(hand, revealed_flags)):
+            if not revealed:
+                continue
+            gs.public_constraints.append(RankIndicatorConstraint(
+                player_index=player_index,
+                wire_rank_index=gs.wire_to_index_mapping[wire],
+                indicator_location_index=position,
+            ))
+
+
+def test_make_best_entropy_decision_on_heavily_revealed_state():
+    """Performance/smoke: exact Level C minimax on a board where most wires are already
+    revealed. A nearly-solved state should complete in a handful of kernel calls because
+    few ranks have non-trivial density at each unrevealed position and each player holds
+    only a couple of unrevealed wires.
+    """
+    # 5 players × 5-wire hands. Sorted by raw_int.
+    hands = [
+        [b(1), b(2), b(3), b(4), b(5)],
+        [b(6), b(7), b(8), b(9), b(10)],
+        [b(1), b(2), b(3), b(11), b(12)],
+        [b(4), b(5), b(6), b(7), b(8)],
+        [b(1), b(9), b(10), b(11), b(12)],
+    ]
+    # Reveal every position except the last one per player. Each player has 1 unrevealed wire.
+    revealed = [[True, True, True, True, False] for _ in range(5)]
+    gs = make_game_state(hands, revealed=revealed)
+    gs.public_constraints = []  # ensure clean slate in case make_game_state didn't reset it
+    _add_rank_indicator_constraints_for_revealed_positions(gs)
+
+    decision = Player(player_index=0).make_decision(gs)
+    assert decision is not None
+    # the chosen decision must have been among the legal ones — verify by type
+    assert isinstance(decision, (SingleCutDecision, DualCutDecision))

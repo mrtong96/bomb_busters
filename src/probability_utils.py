@@ -8,7 +8,13 @@ from collections import Counter, defaultdict
 import numpy as np
 from numba import njit
 
-from src.constraint import Constraint, SubsetConstraint, get_constraint_matrix
+from src.constraint import (
+    Constraint,
+    ForbidRankConstraint,
+    SubsetConstraint,
+    YellowWireAskConstraint,
+    get_constraint_matrix,
+)
 
 @functools.cache
 def get_wire_placements(max_wires, wires, players) -> tuple[tuple[int, ...]]:
@@ -316,19 +322,95 @@ def compute_probability_matrices(
     constraints: Optional[list[Constraint]] = None,
 ) -> tuple:
     """
-    way to recursively compute wire limits
+    Public entry point. Runs the per-rank DP kernel once, or — if any
+    YellowWireAskConstraint is present — runs it 2^N times (one per subset of constrained
+    players forced to zero yellow) and combines results with inclusion-exclusion signs.
 
     Args:
         :param wire_limits_per_player: number of wires you can place per player (not self)
         :param wire_limits: dictionary of wire limits [min, max] for the sum of the remaining players
         :param constraints: additional constraints for the hand
     """
+    constraints = list(constraints) if constraints is not None else []
+    yellow_asks       = [c for c in constraints if isinstance(c, YellowWireAskConstraint)]
+    other_constraints = [c for c in constraints if not isinstance(c, YellowWireAskConstraint)]
+
+    if not yellow_asks:
+        return _compute_probability_matrices_kernel(
+            wire_limits_per_player, wire_limits, other_constraints,
+        )
+
+    # Dedupe by (player, frozenset of yellow ranks) to avoid double-counting in IE.
+    seen = {}
+    for ask in yellow_asks:
+        seen[(ask.player_index, frozenset(ask.yellow_rank_indexes))] = ask
+    yellow_asks = list(seen.values())
+
+    density_times_weight      = None
+    combinations_times_weight = None
+    total_weight              = 0.0
+    total_combinations_count  = 0.0
+
+    for subset_size in range(len(yellow_asks) + 1):
+        sign = -1.0 if subset_size % 2 else 1.0
+        for subset in itertools.combinations(yellow_asks, subset_size):
+            forbid_constraints = [
+                ForbidRankConstraint(player_index=ask.player_index, wire_rank_index=rank)
+                for ask in subset
+                for rank in ask.yellow_rank_indexes
+            ]
+            try:
+                density_S, combinations_matrix_S, combinations_count_S, weight_S = (
+                    _compute_probability_matrices_kernel(
+                        wire_limits_per_player,
+                        wire_limits,
+                        other_constraints + forbid_constraints,
+                    )
+                )
+            except RuntimeError:
+                # Scenario is infeasible (no valid placement) — contributes nothing.
+                continue
+            if weight_S == 0.0:
+                continue
+
+            unnorm_density      = density_S             * weight_S
+            unnorm_combinations = combinations_matrix_S * weight_S
+
+            if density_times_weight is None:
+                density_times_weight      = sign * unnorm_density
+                combinations_times_weight = sign * unnorm_combinations
+            else:
+                density_times_weight      += sign * unnorm_density
+                combinations_times_weight += sign * unnorm_combinations
+            total_weight             += sign * weight_S
+            total_combinations_count += sign * combinations_count_S
+
+    if total_weight <= 0.0 or density_times_weight is None:
+        raise RuntimeError(
+            f"inclusion-exclusion combined weight is {total_weight}; "
+            "yellow WireAsk constraints are infeasible given the rest of the setup"
+        )
+
+    density_matrix      = density_times_weight      / total_weight
+    combinations_matrix = combinations_times_weight / total_weight
+    return density_matrix, combinations_matrix, total_combinations_count, total_weight
+
+
+def _compute_probability_matrices_kernel(
+    wire_limits_per_player: np.array,
+    wire_limits: dict[int, tuple[int, int]],
+    constraints: list[Constraint],
+) -> tuple:
+    """
+    Per-rank DP kernel. Assumes every constraint is expressible in the per-cell
+    constraint matrix (no joint cross-rank constraints — those are handled by the
+    public driver above).
+    """
     # init stuff
     num_players = len(wire_limits_per_player)
     total_wires = sum(wire_limits_per_player)
     max_wires_per_player = max(wire_limits_per_player)
     num_possible_wires = len(wire_limits)
-    constraints = constraints or []
     # Non-subset constraints feed into the per-cell constraint matrix; subset constraints are applied
     # combinatorially in get_wire_combinations / get_wire_placement_key. The matrix is always built:
     # when no non-subset constraints are supplied, it still encodes the per-player wire-limit constraints

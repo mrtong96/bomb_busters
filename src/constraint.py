@@ -165,6 +165,41 @@ class WireLimitConstraint(Constraint):
         exceeds_limit = (prefilled_offset + num_wires) > self.wire_limit
         constraint_matrix[self.player_index] &= ~exceeds_limit
 
+class ForbidRankConstraint(Constraint):
+    """
+    Player holds zero wires of this rank. Used by inclusion-exclusion handling of
+    YellowWireAskConstraint — the "no yellow" scenario is expressible per-rank as a
+    stack of ForbidRankConstraint instances.
+    """
+    def __init__(self, player_index, wire_rank_index):
+        self.player_index = player_index
+        self.wire_rank_index = wire_rank_index
+
+    def update_constraint_matrix(self, constraint_matrix: np.array) -> None:
+        # Allow num_wires == 0; forbid every count >= 1.
+        constraint_matrix[self.player_index, self.wire_rank_index, :, 1:] = False
+
+class YellowWireAskConstraint(WireAskConstraint):
+    """
+    Player asked a rank-unspecified yellow dual cut and thus holds at least one wire across
+    the given yellow ranks. Semantically a WireAskConstraint over a set of ranks rather
+    than a single rank.
+
+    Because this is a JOINT constraint across ranks it cannot be expressed in the
+    per-cell constraint matrix; update_constraint_matrix is a no-op and
+    compute_probability_matrices applies it via inclusion-exclusion.
+    """
+    def __init__(self, player_index, yellow_rank_indexes):
+        # wire_rank_index has no single value for a joint ask; pass None so callers that
+        # look at the parent's attribute will see an explicit sentinel rather than a
+        # misleading rank index.
+        super().__init__(player_index=player_index, wire_rank_index=None)
+        self.yellow_rank_indexes = list(yellow_rank_indexes)
+
+    def update_constraint_matrix(self, constraint_matrix: np.array) -> None:
+        # Intentionally empty. See class docstring.
+        pass
+
 def get_constraint_matrix(
         wire_limits_per_player,
         wire_ranks,

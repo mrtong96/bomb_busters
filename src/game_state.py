@@ -4,7 +4,12 @@ from typing import Optional
 
 import numpy as np
 
-from src.constraint import RankIndicatorConstraint, SubsetConstraint, WireAskConstraint
+from src.constraint import (
+    RankIndicatorConstraint,
+    SubsetConstraint,
+    WireAskConstraint,
+    YellowWireAskConstraint,
+)
 from src.decision import Decision, SingleCutDecision, DualCutDecision, AskeeResponseDecision, AskerResponseDecision
 from src.wire import Wire, BLUE, YELLOW, RED
 
@@ -145,7 +150,19 @@ class GameState:
     def increment_player_to_move(self):
         self.player_to_move = (self.player_to_move + 1) % self.num_players
 
-    def update_constraints_from_decision(self, decision: Decision) -> None:
+    def process_decision(self, decision: Decision) -> None:
+        # add the turn to the list
+        if self.is_start_of_turn:
+            self.turns.append([decision])
+        else:
+            self.most_recent_turn.append(decision)
+
+        # update known constraints from the decision
+        self._update_constraints_from_decision(decision)
+        # update all state variables for the decision
+        self._update_state_from_decision(decision)
+
+    def _update_constraints_from_decision(self, decision: Decision) -> None:
         """
         Update the set of constraints known from the fact that a decision occurred
         Args:
@@ -173,15 +190,24 @@ class GameState:
                 ))
         elif isinstance(decision, DualCutDecision):
             # It is now public that the asker player has at least one wire of that rank.
-            # TODO: refactor probability_utils.py to take into account WireAskConstraints for yellow
-            # (rank-unspecified) asks. The current constraint_matrix only handles independent
-            # wire assignments of a single rank, so "has at least one wire across these yellow
-            # ranks" is not expressible; skip emitting for now.
+            # Specific-rank ask → per-rank WireAskConstraint. Rank-unspecified yellow ask →
+            # a joint YellowWireAskConstraint over all yellow ranks, which compute_probability_matrices
+            # applies via inclusion-exclusion.
             if decision.wire.rank != 0:
                 constraints.append(WireAskConstraint(
                     player_index=decision.asker_player_index,
                     wire_rank_index=self.wire_to_index_mapping[decision.wire],
                 ))
+            else:
+                yellow_rank_indexes = [
+                    i for i, rank_wire in enumerate(self.wire_ranks)
+                    if rank_wire.color == decision.wire.color
+                ]
+                if yellow_rank_indexes:
+                    constraints.append(YellowWireAskConstraint(
+                        player_index=decision.asker_player_index,
+                        yellow_rank_indexes=yellow_rank_indexes,
+                    ))
         elif isinstance(decision, AskeeResponseDecision):
             # The askee reveals the actual wire at the asked position. Success and failure both
             # reveal the same information in the no-equipment setting.
@@ -201,3 +227,53 @@ class GameState:
             raise NotImplementedError(f"can not handle decision of type {type(decision)}")
 
         self.public_constraints.extend(constraints)
+
+    def _reveal(self, player_index: int, position: int) -> None:
+        """Mark a wire in a player's hand as cut. Idempotent."""
+        if self.revealed_wires[player_index][position]:
+            return
+        self.revealed_wires[player_index][position] = True
+        wire = self.player_wires[player_index][position]
+        self.wire_revealed_counts[self.wire_to_index_mapping[wire]] += 1
+
+    def _update_state_from_decision(self, decision: Decision) -> None:
+        if isinstance(decision, SingleCutDecision):
+            # Reveal every unrevealed wire in the actor's hand matching the cut criterion.
+            cut_wire = decision.wire
+            player_index = decision.player_index
+            for position, wire in enumerate(self.player_wires[player_index]):
+                if self.revealed_wires[player_index][position]:
+                    continue
+                if wire.color != cut_wire.color:
+                    continue
+                if cut_wire.rank != 0 and wire.rank != cut_wire.rank:
+                    continue
+                self._reveal(player_index, position)
+        elif isinstance(decision, DualCutDecision):
+            # The initial ask does not update any of the game state.
+            pass
+        elif isinstance(decision, AskeeResponseDecision):
+            # Successful cut: askee's wire at the asked position is cut.
+            # Failed cut: rank becomes public info (handled by the RankIndicatorConstraint
+            # emitted in _update_constraints_from_decision) but the wire itself is NOT
+            # revealed — a later decision still has to cut it. Health drops instead.
+            if decision.is_successful_dual_cut:
+                self._reveal(decision.askee_player_index, decision.indicator_wire_position)
+            else:
+                self.total_health -= 1
+        elif isinstance(decision, AskerResponseDecision):
+            # Asker reveals (cuts) their matching wire.
+            self._reveal(decision.asker_player_index, decision.hand_position)
+        else:
+            raise NotImplementedError(f"can not handle decision of type {type(decision)}")
+
+        # Evaluate terminal conditions. Winning requires every wire of every rank cut;
+        # losing triggers when health has run out and the game isn't already won.
+        all_cut = all(
+            self.wire_revealed_counts[i] == self.wire_counts[i]
+            for i in range(len(self.wire_counts))
+        )
+        if all_cut:
+            self._has_won = True
+        elif self.total_health <= 0:
+            self._has_lost = True
