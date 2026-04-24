@@ -41,3 +41,5 @@ TODO
 
 Rewrite constraints to have static matrix (indicator constraints) and the subset constraints
 Implement logic to start playing the game with some basic rules (no equipment)
+There's a bug where I need to limit the number of rank indicators globally... later
+  Hard because in the code I don't have a sense of what indicator tiles exist

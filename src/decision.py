@@ -21,6 +21,23 @@ class Decision(ABC):
     def is_turn_ending_decision(self):
         pass
 
+class RankIndicatorRevealDecision(Decision):
+    """First-round reveal: the player publicly shows the rank at one position in their
+    hand. The wire is NOT cut — the position stays in `revealed_wires` as False — only
+    the rank becomes public knowledge via a RankIndicatorConstraint."""
+    def __init__(self, wire: Wire, player_index: int, position: int):
+        super().__init__(wire)
+        self.player_index = player_index
+        self.position = position
+
+    @property
+    def is_turn_starting_decision(self):
+        return True
+
+    @property
+    def is_turn_ending_decision(self):
+        return True
+
 class CutDecision(Decision):
     def __init__(self, wire: Wire):
         super().__init__(wire)

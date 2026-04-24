@@ -17,6 +17,7 @@ from src.decision import (
     AskeeResponseDecision,
     AskerResponseDecision,
     PassDecision,
+    RankIndicatorRevealDecision,
 )
 from src.wire import Wire, BLUE, YELLOW, RED
 
@@ -154,6 +155,17 @@ class GameState:
     def has_lost(self) -> bool:
         return self._has_lost
 
+    @property
+    def is_first_round(self) -> bool:
+        """True until every player has finished a first turn.
+
+        A turn is complete once a turn-ending decision is appended to it. When
+        is_start_of_turn is true, every recorded turn is complete; otherwise the
+        most recent turn is still in progress and doesn't count toward the total.
+        """
+        completed_turns = len(self.turns) if self.is_start_of_turn else len(self.turns) - 1
+        return completed_turns < self.num_players
+
     def increment_player_to_move(self):
         self.player_to_move = (self.player_to_move + 1) % self.num_players
 
@@ -233,6 +245,13 @@ class GameState:
         elif isinstance(decision, PassDecision):
             # Player skipped their turn — no new public information.
             pass
+        elif isinstance(decision, RankIndicatorRevealDecision):
+            # First-round reveal: the rank at the chosen position becomes public.
+            constraints.append(RankIndicatorConstraint(
+                player_index=decision.player_index,
+                wire_rank_index=self.wire_to_index_mapping[decision.wire],
+                indicator_location_index=decision.position,
+            ))
         else:
             raise NotImplementedError(f"can not handle decision of type {type(decision)}")
 
@@ -276,6 +295,10 @@ class GameState:
             self._reveal(decision.asker_player_index, decision.hand_position)
         elif isinstance(decision, PassDecision):
             # Player skipped — no reveal, no health change.
+            pass
+        elif isinstance(decision, RankIndicatorRevealDecision):
+            # First-round reveal: rank becomes public via the constraint emitted in
+            # _update_constraints_from_decision but the wire stays in the hand uncut.
             pass
         else:
             raise NotImplementedError(f"can not handle decision of type {type(decision)}")

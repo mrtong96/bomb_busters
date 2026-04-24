@@ -9,7 +9,7 @@ from src.constraint import (
     YellowWireAskConstraint,
 )
 from src.decision import Decision, DualCutDecision, AskeeResponseDecision, SingleCutDecision, \
-    AskerResponseDecision, PassDecision
+    AskerResponseDecision, PassDecision, RankIndicatorRevealDecision
 from src.game_state import GameState
 from src.probability_utils import compute_probability_matrices, compute_shannon_entropy
 from src.wire import Wire, BLUE, YELLOW, RED
@@ -51,6 +51,8 @@ class Player:
 
         Preference rules:
           - If a response is the only legal option (turn-mid response phase), return it.
+          - (TODO implement) else if there are RankIndicatorRevealDecision to make, then pick the one
+            that minimizes global entropy
           - Else if any single cut exists, pick the one that minimizes post-state global
             (public-observer) entropy. Single cuts always succeed, so "best" is chosen by
             information content rather than success probability.
@@ -68,6 +70,15 @@ class Player:
         if asker_responses:
             return min(
                 asker_responses,
+                key=lambda d: self._expected_entropy_after(game_state, d),
+            )
+
+        # First-round reveal phase: pick the indicator reveal that minimizes post-state
+        # global entropy.
+        indicator_reveals = [d for d in legal_decisions if isinstance(d, RankIndicatorRevealDecision)]
+        if indicator_reveals:
+            return min(
+                indicator_reveals,
                 key=lambda d: self._expected_entropy_after(game_state, d),
             )
 
@@ -195,8 +206,8 @@ class Player:
           automatically. On success branches, Level C minimax picks the asker response
           that minimizes post-state entropy; that minimum becomes the r's contribution.
         """
-        if isinstance(decision, (SingleCutDecision, AskerResponseDecision)):
-            # Both are deterministic reveals: clone the state, apply, measure.
+        if isinstance(decision, (SingleCutDecision, AskerResponseDecision, RankIndicatorRevealDecision)):
+            # All three are deterministic information reveals: clone the state, apply, measure.
             cloned = copy.deepcopy(game_state)
             cloned.process_decision(decision)
             return self._entropy_of_state(cloned)
@@ -453,10 +464,51 @@ class Player:
             raise ValueError("No matching unrevealed wire in asker's hand to reveal")
         return decisions
 
+    def _get_all_first_round_indicator_decisions(self, game_state: GameState) -> list[RankIndicatorRevealDecision]:
+        """Enumerate every legal first-round reveal: one RankIndicatorRevealDecision per
+        unrevealed BLUE wire in the acting player's hand. Yellow / red wires can't be
+        revealed in the first round. The first-round rule also caps reveals at most 2
+        players per rank, so any rank already indicated twice is filtered out."""
+        own_hand = game_state.player_wires[self.player_index]
+        own_revealed_flags = game_state.revealed_wires[self.player_index]
+
+        # Tally how many times each rank has already been indicated. During the first
+        # round only RankIndicatorRevealDecisions are recorded, so iterating the turn
+        # history captures every indication so far.
+        rank_indication_counts: dict[int, int] = {}
+        for turn in game_state.turns:
+            for past_decision in turn:
+                if isinstance(past_decision, RankIndicatorRevealDecision):
+                    rank_index = game_state.wire_to_index_mapping[past_decision.wire]
+                    rank_indication_counts[rank_index] = rank_indication_counts.get(rank_index, 0) + 1
+
+        decisions: list[RankIndicatorRevealDecision] = []
+        for position, wire in enumerate(own_hand):
+            if own_revealed_flags[position]:
+                continue
+            if wire.color != BLUE:
+                continue
+            rank_index = game_state.wire_to_index_mapping[wire]
+            if rank_indication_counts.get(rank_index, 0) >= 2:
+                continue
+            decisions.append(RankIndicatorRevealDecision(
+                wire=wire,
+                player_index=self.player_index,
+                position=position,
+            ))
+        return decisions
+
     def get_all_legal_decisions(self, game_state: GameState) -> list[Decision]:
         legal_decisions = []
 
-        if game_state.is_start_of_turn:
+        if game_state.is_first_round:
+            indicator_decisions = self._get_all_first_round_indicator_decisions(game_state)
+            if indicator_decisions:
+                return indicator_decisions
+            # No legal indicator (no blue wires, or every blue rank already indicated by 2
+            # other players). Skip this player's first-round turn.
+            return [PassDecision()]
+        elif game_state.is_start_of_turn:
             # If the acting player has no wires left (every position in their own hand is
             # already revealed), they have no legal cut to make and skip their turn.
             if all(game_state.revealed_wires[self.player_index]):

@@ -6,6 +6,7 @@ from src.decision import (
     AskeeResponseDecision,
     AskerResponseDecision,
     DualCutDecision,
+    PassDecision,
     SingleCutDecision,
 )
 from src.game_state import GameState
@@ -25,10 +26,15 @@ def r(rank):
     return Wire(rank=rank, color=RED)
 
 
-def make_game_state(hands, revealed=None, turns=None):
+def make_game_state(hands, revealed=None, turns=None, past_first_round=True):
     """Build a GameState with deterministic hands by overriding the random deal.
 
     Hands must already be sorted by wire.raw_int (rank * 10 + color).
+
+    By default the state is fast-forwarded past the first round (N dummy PassDecision
+    turns prepended) so tests that care about cut / response dispatch don't have to
+    stage first-round reveals. Set past_first_round=False to exercise the first-round
+    code paths directly.
     """
     assert len(hands) == 5, "GameState hard-codes 5 players"
     for i, hand in enumerate(hands):
@@ -52,7 +58,9 @@ def make_game_state(hands, revealed=None, turns=None):
         for wire, flag in zip(hand, flags):
             if flag:
                 gs.wire_revealed_counts[gs.wire_to_index_mapping[wire]] += 1
-    gs.turns = turns or []
+    gs.turns = list(turns) if turns is not None else []
+    if past_first_round:
+        gs.turns = [[PassDecision()] for _ in range(len(hands))] + gs.turns
     return gs
 
 
