@@ -61,6 +61,16 @@ class Player:
         if len(legal_decisions) == 1:
             return legal_decisions[0]
 
+        # Asker-response phase with multiple matching wires: pick the one minimizing
+        # post-state global entropy. (Reaches here only when this branch contains all
+        # legal decisions; turn-start phases never mix asker responses with other types.)
+        asker_responses = [d for d in legal_decisions if isinstance(d, AskerResponseDecision)]
+        if asker_responses:
+            return min(
+                asker_responses,
+                key=lambda d: self._expected_entropy_after(game_state, d),
+            )
+
         single_cuts = [d for d in legal_decisions if isinstance(d, SingleCutDecision)]
         if single_cuts:
             return min(
@@ -185,7 +195,8 @@ class Player:
           automatically. On success branches, Level C minimax picks the asker response
           that minimizes post-state entropy; that minimum becomes the r's contribution.
         """
-        if isinstance(decision, SingleCutDecision):
+        if isinstance(decision, (SingleCutDecision, AskerResponseDecision)):
+            # Both are deterministic reveals: clone the state, apply, measure.
             cloned = copy.deepcopy(game_state)
             cloned.process_decision(decision)
             return self._entropy_of_state(cloned)
@@ -411,12 +422,14 @@ class Player:
             indicator_wire_position=dual_cut_decision.askee_hand_position,
         )
 
-    def _get_asker_response_decision(self, game_state: GameState) -> AskerResponseDecision:
+    def _get_all_asker_response_decisions(self, game_state: GameState) -> list[AskerResponseDecision]:
+        """Enumerate every legal AskerResponseDecision after a successful dual cut. The
+        asker may have more than one matching unrevealed wire in their hand (especially
+        for yellow rank-unspecified claims), and each choice is a separate decision."""
         most_recent_decision = game_state.most_recent_decision
         if (not isinstance(most_recent_decision, AskeeResponseDecision)
             or not most_recent_decision.is_successful_dual_cut):
-            raise ValueError("Most recent decision can only be a failed dual cut from the Askee")
-        # We can pick any of the successful wire ranks that we initially asked to reveal.
+            raise ValueError("Most recent decision can only be a successful AskeeResponseDecision")
         # Turn sequence is always DualCutDecision, AskeeResponseDecision, AskerResponseDecision
         dual_cut_decision = game_state.most_recent_turn[-2]
         if not isinstance(dual_cut_decision, DualCutDecision):
@@ -424,18 +437,21 @@ class Player:
         claim = dual_cut_decision.wire
         asker_hand = game_state.player_wires[dual_cut_decision.asker_player_index]
         asker_revealed_flags = game_state.revealed_wires[dual_cut_decision.asker_player_index]
+        decisions: list[AskerResponseDecision] = []
         for pos, (wire, revealed) in enumerate(zip(asker_hand, asker_revealed_flags)):
             if revealed or wire.color != claim.color:
                 continue
             if claim.rank != 0 and wire.rank != claim.rank:
                 continue
-            return AskerResponseDecision(
+            decisions.append(AskerResponseDecision(
                 wire=wire,
                 asker_player_index=dual_cut_decision.asker_player_index,
                 askee_player_index=dual_cut_decision.askee_player_index,
                 hand_position=pos,
-            )
-        raise ValueError("No matching unrevealed wire in asker's hand to reveal")
+            ))
+        if not decisions:
+            raise ValueError("No matching unrevealed wire in asker's hand to reveal")
+        return decisions
 
     def get_all_legal_decisions(self, game_state: GameState) -> list[Decision]:
         legal_decisions = []
@@ -460,7 +476,7 @@ class Player:
             elif (isinstance(most_recent_decision, AskeeResponseDecision)
                 and most_recent_decision.is_successful_dual_cut
             ):
-                legal_decisions.append(self._get_asker_response_decision(game_state))
+                legal_decisions.extend(self._get_all_asker_response_decisions(game_state))
             else:
                 raise ValueError(f"unrecognized last decision: {game_state.most_recent_decision}")
 

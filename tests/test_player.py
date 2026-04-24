@@ -313,7 +313,9 @@ def test_asker_response_picks_matching_wire():
         indicator_wire=b(6), indicator_wire_position=0,
     )
     gs = make_game_state(hands, turns=[[dual, askee]])
-    response = Player(player_index=0)._get_asker_response_decision(gs)
+    responses = Player(player_index=0)._get_all_asker_response_decisions(gs)
+    assert len(responses) == 1  # only b(6) at position 4 matches in player 0's hand
+    response = responses[0]
     assert isinstance(response, AskerResponseDecision)
     assert response.wire == b(6)
     assert response.hand_position == 4
@@ -332,7 +334,7 @@ def test_asker_response_raises_when_askee_response_failed():
     )
     gs = make_game_state(hands, turns=[[dual, failed_askee]])
     with pytest.raises(ValueError):
-        Player(player_index=0)._get_asker_response_decision(gs)
+        Player(player_index=0)._get_all_asker_response_decisions(gs)
 
 
 # --- get_all_legal_decisions dispatch ---
