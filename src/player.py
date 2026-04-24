@@ -9,7 +9,7 @@ from src.constraint import (
     YellowWireAskConstraint,
 )
 from src.decision import Decision, DualCutDecision, AskeeResponseDecision, SingleCutDecision, \
-    AskerResponseDecision
+    AskerResponseDecision, PassDecision
 from src.game_state import GameState
 from src.probability_utils import compute_probability_matrices, compute_shannon_entropy
 from src.wire import Wire, BLUE, YELLOW, RED
@@ -441,6 +441,11 @@ class Player:
         legal_decisions = []
 
         if game_state.is_start_of_turn:
+            # If the acting player has no wires left (every position in their own hand is
+            # already revealed), they have no legal cut to make and skip their turn.
+            if all(game_state.revealed_wires[self.player_index]):
+                return [PassDecision()]
+
             # check if there are any single cut decisions
             legal_decisions.extend(self._get_all_single_cut_decisions(game_state))
 

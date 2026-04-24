@@ -10,7 +10,14 @@ from src.constraint import (
     WireAskConstraint,
     YellowWireAskConstraint,
 )
-from src.decision import Decision, SingleCutDecision, DualCutDecision, AskeeResponseDecision, AskerResponseDecision
+from src.decision import (
+    Decision,
+    SingleCutDecision,
+    DualCutDecision,
+    AskeeResponseDecision,
+    AskerResponseDecision,
+    PassDecision,
+)
 from src.wire import Wire, BLUE, YELLOW, RED
 
 
@@ -223,6 +230,9 @@ class GameState:
                 wire_rank_index=self.wire_to_index_mapping[decision.wire],
                 indicator_location_index=decision.hand_position,
             ))
+        elif isinstance(decision, PassDecision):
+            # Player skipped their turn — no new public information.
+            pass
         else:
             raise NotImplementedError(f"can not handle decision of type {type(decision)}")
 
@@ -264,6 +274,9 @@ class GameState:
         elif isinstance(decision, AskerResponseDecision):
             # Asker reveals (cuts) their matching wire.
             self._reveal(decision.asker_player_index, decision.hand_position)
+        elif isinstance(decision, PassDecision):
+            # Player skipped — no reveal, no health change.
+            pass
         else:
             raise NotImplementedError(f"can not handle decision of type {type(decision)}")
 

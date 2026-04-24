@@ -115,3 +115,22 @@ class AskerResponseDecision(ResponseDecision):
     @property
     def is_turn_ending_decision(self):
         return True
+
+class PassDecision(Decision):
+    """
+    The acting player has no legal moves (typically because every wire in their hand has
+    already been cut) and skips their turn. No constraints emitted, no state updated;
+    the turn just ends.
+    """
+    def __init__(self):
+        # No wire is associated with passing; pass None so the parent's `wire` attribute
+        # exists as an explicit sentinel rather than being absent.
+        super().__init__(wire=None)
+
+    @property
+    def is_turn_starting_decision(self):
+        return True
+
+    @property
+    def is_turn_ending_decision(self):
+        return True
