@@ -31,9 +31,12 @@ class CutDecision(Decision):
 
 # self cutting wires, only can cut if you have all the wires of a certain type
 # all 4 blue wires, 2 remaining blue wires, 2 yellow wires, red wires with only red wires remaining in hand
+# One SingleCutDecision represents cutting every unrevealed wire in the player's hand that matches the
+# decision's wire (by color for rank=0, by color + rank otherwise) — potentially multiple positions at once.
 class SingleCutDecision(CutDecision):
-    def __init__(self, wire: Wire):
+    def __init__(self, wire: Wire, player_index: int):
         super().__init__(wire)
+        self.player_index = player_index
 
     @property
     def is_turn_ending_decision(self):
@@ -62,8 +65,10 @@ class DualCutDecision(CutDecision):
 
 # responding to a dual cut
 class ResponseDecision(Decision):
-    def __init__(self, wire: Wire):
+    def __init__(self, wire: Wire, asker_player_index: int, askee_player_index: int):
         super().__init__(wire)
+        self.asker_player_index = asker_player_index
+        self.askee_player_index = askee_player_index
 
     @property
     def is_turn_starting_decision(self):
@@ -74,16 +79,20 @@ class AskeeResponseDecision(ResponseDecision):
     If the decision is successful, then the askee indicates that the wire at the indicated position is cut, then
     lets the asker cut their corresponding wire.
 
+    # TODO: this is not compatible with the possibility of using equipment, implement this later
+
     If the decision is unsuccessful, then the askee indicates what wire was attempted to be cut
     """
     def __init__(
             self,
             wire: Wire,
+            asker_player_index: int,
+            askee_player_index: int,
             is_successful_dual_cut: bool,
             indicator_wire: Wire,
             indicator_wire_position: int,
     ):
-        super().__init__(wire)
+        super().__init__(wire, asker_player_index, askee_player_index)
         self.is_successful_dual_cut = is_successful_dual_cut
         self.indicator_wire = indicator_wire
         self.indicator_wire_position = indicator_wire_position
@@ -94,10 +103,13 @@ class AskeeResponseDecision(ResponseDecision):
 
 class AskerResponseDecision(ResponseDecision):
     def __init__(
-            self, wire: Wire,
+            self,
+            wire: Wire,
+            asker_player_index: int,
+            askee_player_index: int,
             hand_position: int,
     ):
-        super().__init__(wire)
+        super().__init__(wire, asker_player_index, askee_player_index)
         self.hand_position = hand_position
 
     @property

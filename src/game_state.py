@@ -4,8 +4,8 @@ from typing import Optional
 
 import numpy as np
 
-from src.constraint import SubsetConstraint
-from src.decision import Decision
+from src.constraint import RankIndicatorConstraint, SubsetConstraint, WireAskConstraint
+from src.decision import Decision, SingleCutDecision, DualCutDecision, AskeeResponseDecision, AskerResponseDecision
 from src.wire import Wire, BLUE, YELLOW, RED
 
 
@@ -64,7 +64,7 @@ class GameState:
         self.wire_limits_per_player = []
         # used for probability_utils calls
         self.wire_to_index_mapping = {}
-        self.subset_constraints = []
+        self.public_constraints = []
 
         self._init_board()
 
@@ -114,7 +114,7 @@ class GameState:
                     wire_rank_indexes=[self.wire_to_index_mapping[wire] for wire in subset_wires],
                     subset_count=wire_count,
                 )
-                self.subset_constraints.append(subset_constraint)
+                self.public_constraints.append(subset_constraint)
 
     @property
     def is_start_of_turn(self) -> bool:
@@ -141,3 +141,63 @@ class GameState:
     @property
     def has_lost(self) -> bool:
         return self._has_lost
+
+    def increment_player_to_move(self):
+        self.player_to_move = (self.player_to_move + 1) % self.num_players
+
+    def update_constraints_from_decision(self, decision: Decision) -> None:
+        """
+        Update the set of constraints known from the fact that a decision occurred
+        Args:
+            decision: the decision that was most recently made.
+        """
+        constraints = []
+        if isinstance(decision, SingleCutDecision):
+            # A single cut reveals every unrevealed wire in the player's hand that matches
+            # decision.wire — by color+rank for blue, by color alone for rank=0 (yellow/red).
+            # Each matching position becomes a RankIndicatorConstraint for its actual rank.
+            player_index = decision.player_index
+            cut_wire = decision.wire
+            for position, (wire, is_revealed) in enumerate(zip(
+                    self.player_wires[player_index], self.revealed_wires[player_index])):
+                if is_revealed:
+                    continue
+                if wire.color != cut_wire.color:
+                    continue
+                if cut_wire.rank != 0 and wire.rank != cut_wire.rank:
+                    continue
+                constraints.append(RankIndicatorConstraint(
+                    player_index=player_index,
+                    wire_rank_index=self.wire_to_index_mapping[wire],
+                    indicator_location_index=position,
+                ))
+        elif isinstance(decision, DualCutDecision):
+            # It is now public that the asker player has at least one wire of that rank.
+            # TODO: refactor probability_utils.py to take into account WireAskConstraints for yellow
+            # (rank-unspecified) asks. The current constraint_matrix only handles independent
+            # wire assignments of a single rank, so "has at least one wire across these yellow
+            # ranks" is not expressible; skip emitting for now.
+            if decision.wire.rank != 0:
+                constraints.append(WireAskConstraint(
+                    player_index=decision.asker_player_index,
+                    wire_rank_index=self.wire_to_index_mapping[decision.wire],
+                ))
+        elif isinstance(decision, AskeeResponseDecision):
+            # The askee reveals the actual wire at the asked position. Success and failure both
+            # reveal the same information in the no-equipment setting.
+            constraints.append(RankIndicatorConstraint(
+                player_index=decision.askee_player_index,
+                wire_rank_index=self.wire_to_index_mapping[decision.indicator_wire],
+                indicator_location_index=decision.indicator_wire_position,
+            ))
+        elif isinstance(decision, AskerResponseDecision):
+            # The asker reveals the wire they cut from their own hand.
+            constraints.append(RankIndicatorConstraint(
+                player_index=decision.asker_player_index,
+                wire_rank_index=self.wire_to_index_mapping[decision.wire],
+                indicator_location_index=decision.hand_position,
+            ))
+        else:
+            raise NotImplementedError(f"can not handle decision of type {type(decision)}")
+
+        self.public_constraints.extend(constraints)

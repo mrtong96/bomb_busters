@@ -69,7 +69,7 @@ def test_single_cut_blue_all_remaining_in_hand():
     ]
     gs = make_game_state(hands)
     decisions = Player(player_index=0)._get_all_single_cut_decisions(gs)
-    assert sum(1 for d in decisions if d.wire == b(3)) == 4
+    assert sum(1 for d in decisions if d.wire == b(3)) == 1
     assert not any(d.wire == b(7) for d in decisions)
 
 
@@ -98,7 +98,7 @@ def test_single_cut_blue_unblocked_after_reveal():
     revealed[1][2] = True  # b(3) at sorted position 2 in player 1's hand
     gs = make_game_state(hands, revealed=revealed)
     decisions = Player(player_index=0)._get_all_single_cut_decisions(gs)
-    assert sum(1 for d in decisions if d.wire == b(3)) == 3
+    assert sum(1 for d in decisions if d.wire == b(3)) == 1
 
 
 def test_single_cut_yellow_all_in_own_hand():
@@ -112,7 +112,8 @@ def test_single_cut_yellow_all_in_own_hand():
     gs = make_game_state(hands)
     decisions = Player(player_index=0)._get_all_single_cut_decisions(gs)
     yellow_decisions = [d for d in decisions if d.wire.color == YELLOW]
-    assert len(yellow_decisions) == 2
+    assert len(yellow_decisions) == 1  # single cut-action covers every matching yellow position
+    assert yellow_decisions[0].wire.rank == 0  # rank=0 signals "all yellows"
 
 
 def test_single_cut_yellow_blocked_by_other_player():
@@ -141,7 +142,8 @@ def test_single_cut_red_only_when_all_unrevealed_are_red():
     gs = make_game_state(hands, revealed=revealed)
     decisions = Player(player_index=0)._get_all_single_cut_decisions(gs)
     red_decisions = [d for d in decisions if d.wire.color == RED]
-    assert len(red_decisions) == 3
+    assert len(red_decisions) == 1  # single cut-action covers every matching red position
+    assert red_decisions[0].wire.rank == 0  # rank=0 signals "all reds"
 
 
 def test_single_cut_red_blocked_when_mixed_hand():
@@ -306,7 +308,8 @@ def test_asker_response_picks_matching_wire():
         askee_player_position=1, askee_hand_position=0,
     )
     askee = AskeeResponseDecision(
-        wire=b(6), is_successful_dual_cut=True,
+        wire=b(6), asker_player_index=0, askee_player_index=1,
+        is_successful_dual_cut=True,
         indicator_wire=b(6), indicator_wire_position=0,
     )
     gs = make_game_state(hands, turns=[[dual, askee]])
@@ -323,7 +326,8 @@ def test_asker_response_raises_when_askee_response_failed():
         askee_player_position=1, askee_hand_position=0,
     )
     failed_askee = AskeeResponseDecision(
-        wire=b(1), is_successful_dual_cut=False,
+        wire=b(1), asker_player_index=0, askee_player_index=1,
+        is_successful_dual_cut=False,
         indicator_wire=b(1), indicator_wire_position=0,
     )
     gs = make_game_state(hands, turns=[[dual, failed_askee]])
@@ -377,7 +381,8 @@ def test_legal_decisions_after_successful_askee_returns_asker_response():
         askee_player_position=1, askee_hand_position=0,
     )
     askee = AskeeResponseDecision(
-        wire=b(6), is_successful_dual_cut=True,
+        wire=b(6), asker_player_index=0, askee_player_index=1,
+        is_successful_dual_cut=True,
         indicator_wire=b(6), indicator_wire_position=0,
     )
     gs = make_game_state(hands, turns=[[dual, askee]])

@@ -9,7 +9,38 @@ class Player:
     def __init__(self, player_index: int):
         self.player_index = player_index
 
-    def make_decision(self, game_state: GameState):
+    def make_decision(self, game_state: GameState) -> Decision:
+        """
+        Function to figure out what each player should do at any given time.
+        For now just go with a simple heuristic of trying to reduce the global entropy of the possible wire hands
+        given all public information
+
+        At some later point implement some logic to make tradeoffs that move towards maximizing win probability
+        Possible improvements could include:
+        * Making sure there are likely safe moves after the turn concludes
+        * Changing tolerance for failed guesses depending on how many incorrect guesses are remaining
+        * Being able to consider hypotheticals and building a game tree
+
+        Args:
+            game_state: The state of the game
+        """
+        legal_decisions = self.get_all_legal_decisions(game_state)
+        return self.make_best_entropy_decision(game_state, legal_decisions)
+
+    def make_best_entropy_decision(self, game_state: GameState, legal_decisions: list[Decision]) -> Decision:
+        """
+        Out of all decisions, choose the one that minimizes the shannon_entropy of the density matrix
+
+        Args:
+            game_state: the current game state before the decision
+            legal_decisions: All legal decisions to consider
+        """
+        # for each decision, we need to compute an expected value of the shannon entropy
+        # For single cut decisions, they should be based on the player's information about a hand going public. Should always succeed
+        # For dual cut decisions, there should be some probability that the cut succeeds, some probability that it fails with each possible response.
+        # Need to compute some sort of expected value of shannon entropy.
+        # For now, can just naively keep calling probability_utils methods to keep recomputing stuff... eventually look into
+        # If there exists approximations/equivalent expressions to not call the expensive method.
         pass
 
     def _get_all_single_cut_decisions(self, game_state: GameState) -> list[SingleCutDecision]:
@@ -27,16 +58,17 @@ class Player:
             idx = game_state.wire_to_index_mapping[wire]
             own_counts_by_rank_index[idx] = own_counts_by_rank_index.get(idx, 0) + 1
 
-        # Blue: own unrevealed count for rank X equals the global unrevealed count for rank X
+        # Blue: one decision per rank X where the player holds all remaining unrevealed blue-X.
+        # A single decision covers every matching wire in the hand simultaneously.
         for idx, own_count in own_counts_by_rank_index.items():
             rank_wire = game_state.wire_ranks[idx]
             if rank_wire.color != BLUE:
                 continue
             global_unrevealed = game_state.wire_counts[idx] - game_state.wire_revealed_counts[idx]
             if own_count == global_unrevealed:
-                decisions.extend(SingleCutDecision(w) for w in own_unrevealed if w == rank_wire)
+                decisions.append(SingleCutDecision(wire=rank_wire, player_index=self.player_index))
 
-        # Yellow: aggregate across every yellow rank — all unrevealed yellow globally must be in own hand
+        # Yellow: one decision (rank=0 "unspecified") when all unrevealed yellow globally sit in own hand.
         yellow_global_unrevealed = sum(
             game_state.wire_counts[i] - game_state.wire_revealed_counts[i]
             for i, w in enumerate(game_state.wire_ranks)
@@ -44,11 +76,15 @@ class Player:
         )
         own_yellow = [w for w in own_unrevealed if w.color == YELLOW]
         if own_yellow and len(own_yellow) == yellow_global_unrevealed:
-            decisions.extend(SingleCutDecision(w) for w in own_yellow)
+            decisions.append(SingleCutDecision(
+                wire=Wire(rank=0, color=YELLOW), player_index=self.player_index,
+            ))
 
-        # Red: only fires when every unrevealed wire in own hand is red
+        # Red: one decision (rank=0 "unspecified") when every unrevealed wire in own hand is red.
         if own_unrevealed and all(w.color == RED for w in own_unrevealed):
-            decisions.extend(SingleCutDecision(w) for w in own_unrevealed)
+            decisions.append(SingleCutDecision(
+                wire=Wire(rank=0, color=RED), player_index=self.player_index,
+            ))
 
         return decisions
 
@@ -106,6 +142,8 @@ class Player:
         is_success = actual.color == claim.color and (claim.rank == 0 or actual.rank == claim.rank)
         return AskeeResponseDecision(
             wire=actual,
+            asker_player_index=dual_cut_decision.asker_player_index,
+            askee_player_index=dual_cut_decision.askee_player_index,
             is_successful_dual_cut=is_success,
             indicator_wire=actual,
             indicator_wire_position=dual_cut_decision.askee_hand_position,
@@ -129,7 +167,12 @@ class Player:
                 continue
             if claim.rank != 0 and wire.rank != claim.rank:
                 continue
-            return AskerResponseDecision(wire=wire, hand_position=pos)
+            return AskerResponseDecision(
+                wire=wire,
+                asker_player_index=dual_cut_decision.asker_player_index,
+                askee_player_index=dual_cut_decision.askee_player_index,
+                hand_position=pos,
+            )
         raise ValueError("No matching unrevealed wire in asker's hand to reveal")
 
     def get_all_legal_decisions(self, game_state: GameState) -> list[Decision]:

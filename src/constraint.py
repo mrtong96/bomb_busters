@@ -127,6 +127,29 @@ class RankNotEqualConstraint(Constraint):
         covers_both = covers_left & covers_right
         constraint_matrix[self.player_index] &= ~covers_both
 
+class FailedDualCutConstraint(Constraint):
+    """
+    Constraint that a dual cut failed, as such the askee is guaranteed to not have wires of a certain rank
+    at certain locations
+    """
+    def __init__(self, player_index, wire_rank_indexes, location_indexes):
+        self.player_index = player_index
+        self.wire_rank_indexes = wire_rank_indexes
+        self.location_indexes = location_indexes
+
+    def update_constraint_matrix(self, constraint_matrix: np.array) -> None:
+        _, _, max_prefilled, max_num_wires = constraint_matrix.shape
+        prefilled_offset, num_wires = np.indices((max_prefilled, max_num_wires))
+        # Union the "covers any of the forbidden locations" masks — a block that covers any
+        # single forbidden location is invalid for a forbidden rank.
+        covers_forbidden_location = np.zeros((max_prefilled, max_num_wires), dtype=bool)
+        for location in self.location_indexes:
+            covers_forbidden_location |= (
+                (prefilled_offset <= location) & (location < prefilled_offset + num_wires)
+            )
+        for wire_rank_index in self.wire_rank_indexes:
+            constraint_matrix[self.player_index, wire_rank_index] &= ~covers_forbidden_location
+
 class WireLimitConstraint(Constraint):
     """
     Constraint that says you can't assign more wires to a hand than what's allowed

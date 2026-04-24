@@ -3,6 +3,7 @@ import pytest
 
 from src.constraint import (
     CountIndicatorConstraint,
+    FailedDualCutConstraint,
     RankEqualConstraint,
     RankIndicatorConstraint,
     RankNotEqualConstraint,
@@ -183,6 +184,68 @@ def test_wire_limit_does_not_touch_other_players():
     WireLimitConstraint(player_index=1, wire_limit=4).update_constraint_matrix(matrix)
     for player in (p for p in range(NUM_PLAYERS) if p != 1):
         assert matrix[player].all()
+
+
+# --- FailedDualCutConstraint ---
+
+def test_failed_dual_cut_single_rank_single_location_bans_blocks_covering_it():
+    matrix = make_matrix()
+    forbidden_rank = 2
+    forbidden_location = 3
+    FailedDualCutConstraint(
+        player_index=0,
+        wire_rank_indexes=[forbidden_rank],
+        location_indexes=[forbidden_location],
+    ).update_constraint_matrix(matrix)
+
+    for prefilled in range(MAX_PREFILLED):
+        for num_wires in range(MAX_NUM_WIRES):
+            covers = (prefilled <= forbidden_location) and (forbidden_location < prefilled + num_wires)
+            assert matrix[0, forbidden_rank, prefilled, num_wires] == (not covers), (
+                prefilled, num_wires,
+            )
+
+
+def test_failed_dual_cut_multiple_ranks_multiple_locations_cross_product():
+    matrix = make_matrix()
+    forbidden_ranks = [1, 3]
+    forbidden_locations = [0, 4]
+    FailedDualCutConstraint(
+        player_index=0,
+        wire_rank_indexes=forbidden_ranks,
+        location_indexes=forbidden_locations,
+    ).update_constraint_matrix(matrix)
+
+    for rank in range(NUM_RANKS):
+        for prefilled in range(MAX_PREFILLED):
+            for num_wires in range(MAX_NUM_WIRES):
+                covers_any_forbidden = any(
+                    (prefilled <= loc) and (loc < prefilled + num_wires)
+                    for loc in forbidden_locations
+                )
+                if rank in forbidden_ranks:
+                    expected = not covers_any_forbidden
+                else:
+                    expected = True
+                assert matrix[0, rank, prefilled, num_wires] == expected, (
+                    rank, prefilled, num_wires,
+                )
+
+
+def test_failed_dual_cut_does_not_touch_other_players_or_unrelated_ranks():
+    matrix = make_matrix()
+    FailedDualCutConstraint(
+        player_index=1,
+        wire_rank_indexes=[2],
+        location_indexes=[1, 2],
+    ).update_constraint_matrix(matrix)
+
+    # other players untouched
+    for player in (p for p in range(NUM_PLAYERS) if p != 1):
+        assert matrix[player].all()
+    # other ranks at player 1 untouched
+    for rank in (r for r in range(NUM_RANKS) if r != 2):
+        assert matrix[1, rank].all()
 
 
 # --- get_constraint_matrix ---

@@ -3,6 +3,7 @@
 # items later
 from typing import Optional
 
+from src.decision import DualCutDecision, AskerResponseDecision, AskeeResponseDecision
 from src.game_state import GameState
 from src.player import Player
 
@@ -37,7 +38,28 @@ class GameManager:
         self.players = [Player(player_index = i) for i in range(num_players)]
 
     def process_turn(self):
-        pass
+        # the first player makes a decision, record it
+        cur_decision = self.players[self.game_state.player_to_move].make_decision(self.game_state)
+        self.game_state.update_constraints_from_decision(cur_decision)
+        self.game_state.turns.append([cur_decision])
 
-    def process_player_decision(self):
-        pass
+        while not cur_decision.is_turn_ending_decision:
+            if isinstance(cur_decision, DualCutDecision):
+                askee_index = cur_decision.askee_player_index
+                cur_decision = self.players[askee_index].make_decision(self.game_state)
+            elif isinstance(cur_decision, AskeeResponseDecision):
+                asker_index = self.game_state.player_to_move
+                cur_decision = self.players[asker_index].make_decision(self.game_state)
+            else:
+                raise NotImplementedError(f"Not implemented yet to continue from a decision {type(cur_decision)}")
+
+            self.game_state.most_recent_turn.append(cur_decision)
+
+            if len(self.game_state.most_recent_turn) > 3:
+                raise RuntimeError("turns should not take more than 3 decisions")
+
+        # end of turn, increment the player turn
+        self.game_state.increment_player_to_move()
+
+    # def process_player_decision(self):
+    #     pass

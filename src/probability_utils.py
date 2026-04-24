@@ -221,6 +221,7 @@ def _accumulate_recursive_case_jit(
     num_dists      = distributions.shape[0]
 
     prev_filled_buf = np.empty(num_players, dtype=np.int64)
+    nw_buf          = np.empty(num_players, dtype=np.int64)
 
     # p_idx outer so density_tensor[p_idx] stays in L1 across all d_idx iterations;
     # d_idx inner reads at most num_dists (~70) prev_density slices (~336 KB, fits in L2)
@@ -228,26 +229,29 @@ def _accumulate_recursive_case_jit(
         for d_idx in range(num_dists):
             cur_count_f = float(counts[d_idx])
 
-            # Capacity check: compute prev_filled for each player, bail early if any is negative
+            # Capacity check: compute prev_filled per player, bail early if any is negative.
+            # Cache nw into nw_buf so the scatter loop below doesn't recompute int(distributions[...]).
             valid = True
             prev_key = np.int64(0)
             for player in range(num_players):
-                pf = np.int64(wire_placements_matrix[p_idx, player]) - np.int64(distributions[d_idx, player])
+                nw = np.int64(distributions[d_idx, player])
+                pf = np.int64(wire_placements_matrix[p_idx, player]) - nw
                 if pf < 0:
                     valid = False
                     break
                 prev_filled_buf[player] = pf
+                nw_buf[player] = nw
                 prev_key += pf * encoding_powers[player]
             if not valid:
                 continue
 
             prev_idx = prev_placement_lookup[prev_key]
 
-            # Constraint matrix check (always includes at least the wire-limit constraints)
+            # Constraint matrix check (always includes at least the wire-limit constraints).
+            # Uses nw_buf + prev_filled_buf so no int() casts / re-reads of distributions.
             constraint_valid = True
             for player in range(num_players):
-                nw = int(distributions[d_idx, player])
-                if not constraint_matrix[player, wire_array_index, prev_filled_buf[player], nw]:
+                if not constraint_matrix[player, wire_array_index, prev_filled_buf[player], nw_buf[player]]:
                     constraint_valid = False
                     break
             if not constraint_valid:
@@ -259,8 +263,9 @@ def _accumulate_recursive_case_jit(
 
             # Dot-product: accumulate scaled previous-level tensors into current level
             for player in range(num_players):
+                pf = prev_filled_buf[player]
                 # only iterate through the subset of the density/combination tensors that are non-zero
-                for slot in range(int(prev_filled_buf[player])):
+                for slot in range(pf):
                     for t in range(wire_array_index):
                         density_tensor[p_idx, player, slot, t] += prev_density[prev_idx, player, slot, t] * cur_count_f
                 for t in range(wire_array_index):
@@ -269,10 +274,10 @@ def _accumulate_recursive_case_jit(
 
             # Scatter: write current wire rank's contribution into the appropriate slots
             for player in range(num_players):
-                nw = int(distributions[d_idx, player])
+                nw = nw_buf[player]
                 if nw == 0:
                     continue
-                pf = int(prev_filled_buf[player])
+                pf = prev_filled_buf[player]
                 for slot_offset in range(nw):
                     density_tensor[p_idx, player, pf + slot_offset, wire_array_index] += contribution
                 combinations_tensor[p_idx, player, wire_array_index, nw - 1] += contribution
@@ -419,3 +424,12 @@ def compute_probability_matrices(
 
     # done
     return density_matrix, combinations_matrix, combinations[0], weight[0]
+
+def compute_shannon_entropy(density_matrix: np.array):
+    shannon_entropy = 0
+    for row in density_matrix[0, :, :]:
+        for el in row:
+            if el == 0:
+                continue
+            shannon_entropy += - el * np.log2(el)
+    return shannon_entropy
