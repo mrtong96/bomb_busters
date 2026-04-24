@@ -3,9 +3,9 @@
 # items later
 from typing import Optional
 
-from src.decision import DualCutDecision, AskerResponseDecision, AskeeResponseDecision
-from src.game_state import GameState
-from src.player import Player
+from src.logic.decision import DualCutDecision, AskerResponseDecision, AskeeResponseDecision
+from src.logic.game_state import GameState
+from src.logic.player import Player
 
 
 class GameManager:

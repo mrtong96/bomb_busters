@@ -2,16 +2,16 @@ from collections import Counter
 
 import pytest
 
-from src.decision import (
+from src.logic.decision import (
     AskeeResponseDecision,
     AskerResponseDecision,
     DualCutDecision,
     PassDecision,
     SingleCutDecision,
 )
-from src.game_state import GameState
-from src.player import Player
-from src.wire import BLUE, RED, YELLOW, Wire
+from src.logic.game_state import GameState
+from src.logic.player import Player
+from src.logic.wire import BLUE, RED, YELLOW, Wire
 
 
 def b(rank):
@@ -407,7 +407,7 @@ def _add_rank_indicator_constraints_for_revealed_positions(gs):
     """For each revealed (player, position), add the RankIndicatorConstraint that a real game
     flow would have produced when that wire was revealed, so the density matrix properly
     collapses to 0/1 at those cells."""
-    from src.constraint import RankIndicatorConstraint
+    from src.logic.constraint import RankIndicatorConstraint
     for player_index, (hand, revealed_flags) in enumerate(zip(gs.player_wires, gs.revealed_wires)):
         for position, (wire, revealed) in enumerate(zip(hand, revealed_flags)):
             if not revealed:

@@ -8,7 +8,7 @@ from collections import Counter, defaultdict
 import numpy as np
 from numba import njit
 
-from src.constraint import (
+from src.logic.constraint import (
     Constraint,
     ForbidRankConstraint,
     SubsetConstraint,

@@ -3,7 +3,7 @@
 # TODO: figure out how to implement equipment here.
 from abc import ABC, abstractmethod
 
-from src.wire import Wire
+from src.logic.wire import Wire
 
 class Decision(ABC):
     def __init__(self, wire: Wire):

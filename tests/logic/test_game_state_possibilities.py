@@ -1,8 +1,8 @@
 import numpy as np
 import pytest
 
-from src.constraint import RankIndicatorConstraint, SubsetConstraint
-from src.probability_utils import compute_probability_matrices
+from src.logic.constraint import RankIndicatorConstraint, SubsetConstraint
+from src.logic.probability_utils import compute_probability_matrices
 
 
 def rank_indicators_from_hand(player_index, hand, empty_sentinel=-1):

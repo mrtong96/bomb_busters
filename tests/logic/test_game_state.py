@@ -2,19 +2,19 @@ from collections import Counter
 
 import pytest
 
-from src.constraint import (
+from src.logic.constraint import (
     RankIndicatorConstraint,
     WireAskConstraint,
     YellowWireAskConstraint,
 )
-from src.decision import (
+from src.logic.decision import (
     AskeeResponseDecision,
     AskerResponseDecision,
     DualCutDecision,
     SingleCutDecision,
 )
-from src.game_state import GameState
-from src.wire import BLUE, RED, YELLOW, Wire
+from src.logic.game_state import GameState
+from src.logic.wire import BLUE, RED, YELLOW, Wire
 
 
 def b(rank):

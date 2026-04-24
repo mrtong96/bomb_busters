@@ -3,16 +3,16 @@ import copy
 
 import numpy as np
 
-from src.constraint import (
+from src.logic.constraint import (
     RankIndicatorConstraint,
     WireAskConstraint,
     YellowWireAskConstraint,
 )
-from src.decision import Decision, DualCutDecision, AskeeResponseDecision, SingleCutDecision, \
+from src.logic.decision import Decision, DualCutDecision, AskeeResponseDecision, SingleCutDecision, \
     AskerResponseDecision, PassDecision, RankIndicatorRevealDecision
-from src.game_state import GameState
-from src.probability_utils import compute_probability_matrices, compute_shannon_entropy
-from src.wire import Wire, BLUE, YELLOW, RED
+from src.logic.game_state import GameState
+from src.logic.probability_utils import compute_probability_matrices, compute_shannon_entropy
+from src.logic.wire import Wire, BLUE, YELLOW, RED
 
 
 class Player:

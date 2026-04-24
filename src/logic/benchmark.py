@@ -1,7 +1,7 @@
 import time
 import numpy as np
-from src.constraint import SubsetConstraint
-from src.probability_utils import compute_probability_matrices, compute_shannon_entropy
+from src.logic.constraint import SubsetConstraint
+from src.logic.probability_utils import compute_probability_matrices, compute_shannon_entropy
 
 
 def make_kwargs():

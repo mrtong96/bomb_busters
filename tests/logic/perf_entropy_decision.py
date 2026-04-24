@@ -2,7 +2,7 @@
 
 Run directly (not auto-collected by pytest since the filename doesn't start with `test_`):
 
-    python tests/perf_entropy_decision.py
+    PYTHONPATH=. python tests/logic/perf_entropy_decision.py
 
 Reveals exactly 2 wires per rank (an even count, reflecting the fact that in real play
 every completed cut adds an even number of reveals to a given rank — single cuts remove
@@ -13,11 +13,11 @@ from collections import Counter
 
 import numpy as np
 
-from src.constraint import RankIndicatorConstraint
-from src.decision import DualCutDecision, SingleCutDecision
-from src.game_state import GameState
-from src.player import Player
-from src.wire import BLUE, Wire
+from src.logic.constraint import RankIndicatorConstraint
+from src.logic.decision import DualCutDecision, SingleCutDecision
+from src.logic.game_state import GameState
+from src.logic.player import Player
+from src.logic.wire import BLUE, Wire
 
 
 def b(rank):

@@ -4,7 +4,7 @@ wins.
 
 Run directly (not auto-collected by pytest since the filename doesn't start with `test_`):
 
-    PYTHONPATH=. python tests/perf_game_playthrough.py
+    PYTHONPATH=. python tests/logic/perf_game_playthrough.py
 
 The GameManager constructs Players with the default decision_making_process='greedy', so
 each turn pays at most one compute_probability_matrices call (for dual-cut candidate
@@ -14,7 +14,7 @@ import time
 
 import numpy as np
 
-from src.game_manager import GameManager
+from src.logic.game_manager import GameManager
 
 
 MAX_TURNS_PER_GAME = 500  # safety cap; real games should finish well under this.

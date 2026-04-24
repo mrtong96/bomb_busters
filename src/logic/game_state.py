@@ -4,13 +4,13 @@ from typing import Optional
 
 import numpy as np
 
-from src.constraint import (
+from src.logic.constraint import (
     RankIndicatorConstraint,
     SubsetConstraint,
     WireAskConstraint,
     YellowWireAskConstraint,
 )
-from src.decision import (
+from src.logic.decision import (
     Decision,
     SingleCutDecision,
     DualCutDecision,
@@ -19,7 +19,7 @@ from src.decision import (
     PassDecision,
     RankIndicatorRevealDecision,
 )
-from src.wire import Wire, BLUE, YELLOW, RED
+from src.logic.wire import Wire, BLUE, YELLOW, RED
 
 
 class GameState:
