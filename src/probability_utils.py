@@ -359,17 +359,14 @@ def compute_probability_matrices(
                 for ask in subset
                 for rank in ask.yellow_rank_indexes
             ]
-            try:
-                density_S, combinations_matrix_S, combinations_count_S, weight_S = (
-                    _compute_probability_matrices_kernel(
-                        wire_limits_per_player,
-                        wire_limits,
-                        other_constraints + forbid_constraints,
-                    )
+            density_S, combinations_matrix_S, combinations_count_S, weight_S = (
+                _compute_probability_matrices_kernel(
+                    wire_limits_per_player,
+                    wire_limits,
+                    other_constraints + forbid_constraints,
                 )
-            except RuntimeError:
-                # Scenario is infeasible (no valid placement) — contributes nothing.
-                continue
+            )
+            # Infeasible scenario contributes nothing to the inclusion-exclusion sum.
             if weight_S == 0.0:
                 continue
 
@@ -386,9 +383,17 @@ def compute_probability_matrices(
             total_combinations_count += sign * combinations_count_S
 
     if total_weight <= 0.0 or density_times_weight is None:
-        raise RuntimeError(
-            f"inclusion-exclusion combined weight is {total_weight}; "
-            "yellow WireAsk constraints are infeasible given the rest of the setup"
+        # Infeasible under the YellowWireAsk inclusion-exclusion — return zero tensors and
+        # zero weight so callers detect infeasibility via `weight == 0`, matching the
+        # kernel's convention.
+        num_players          = len(wire_limits_per_player)
+        max_wires_per_player = max(wire_limits_per_player)
+        num_possible_wires   = len(wire_limits)
+        return (
+            np.zeros((num_players, max_wires_per_player, num_possible_wires), dtype=np.float64),
+            np.zeros((num_players, num_possible_wires, 4), dtype=np.float64),
+            0.0,
+            0.0,
         )
 
     density_matrix      = density_times_weight      / total_weight
@@ -489,6 +494,17 @@ def _compute_probability_matrices_kernel(
     elif combinations_tensor.shape[0] != 1:
         raise RuntimeError("There should only be one possible way to fill in the wires at the terminal wire_placement_dict")
 
+    # Zero-weight means the constraints admit no valid configurations. Return zero tensors
+    # and zero weight so the caller can detect infeasibility via `weight == 0` rather than
+    # getting a NaN density matrix (0/0) or a noisy "invalid value in divide" warning.
+    if weight[0] == 0.0:
+        return (
+            np.zeros(density_tensor.shape[1:], dtype=np.float64),
+            np.zeros(combinations_tensor.shape[1:], dtype=np.float64),
+            0.0,
+            0.0,
+        )
+
     # normalize the data
     density_matrix = density_tensor[0] / weight[0]
     combinations_matrix = combinations_tensor[0] / weight[0]
@@ -508,10 +524,15 @@ def _compute_probability_matrices_kernel(
     return density_matrix, combinations_matrix, combinations[0], weight[0]
 
 def compute_shannon_entropy(density_matrix: np.array):
-    shannon_entropy = 0
-    for row in density_matrix[0, :, :]:
-        for el in row:
-            if el == 0:
-                continue
-            shannon_entropy += - el * np.log2(el)
+    """Sum Shannon entropy across every (player, slot, rank) cell of the density matrix.
+
+    density_matrix has shape (num_players, max_slots, num_ranks). Each cell is the
+    probability of that rank occupying that slot for that player. Cells with probability
+    0 contribute 0 (via the if-guard below, avoiding the 0 * log2(0) = NaN edge case).
+    """
+    shannon_entropy = 0.0
+    for el in density_matrix.ravel():
+        if el == 0:
+            continue
+        shannon_entropy += -el * np.log2(el)
     return shannon_entropy

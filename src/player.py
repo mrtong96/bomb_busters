@@ -75,29 +75,32 @@ class Player:
     def _entropy_of_state(self, game_state: GameState) -> float:
         return compute_shannon_entropy(self._density_matrix(game_state))
 
-    def _entropy_with_extra_constraints(
+    def _entropy_and_weight_with_extra_constraints(
             self, game_state: GameState, extra_constraints: list,
-    ) -> float:
-        """Compute the public-observer entropy as if `extra_constraints` were added to the
-        state, without mutating game_state. Used for evaluating hypothetical outcomes where
-        process_decision's reveal-bookkeeping would otherwise disagree with the hypothetical
-        wire (process_decision reads the actual hand, but hypotheticals pin a different rank
-        at a position than the actual wire there)."""
-        density_matrix, *_ = compute_probability_matrices(
+    ) -> tuple[float, float]:
+        """Run the kernel under `extra_constraints` and return (entropy, weight) of the
+        resulting density matrix without mutating game_state.
+
+        `weight` is the combinatorial count of configurations satisfying every constraint —
+        0 when the hypothetical is infeasible. Callers treat weight as the unnormalized
+        joint probability of that hypothetical outcome and drop branches with weight == 0."""
+        density_matrix, _, _, weight = compute_probability_matrices(
             *self._kernel_args(game_state, extra_constraints)
         )
-        return compute_shannon_entropy(density_matrix)
+        return compute_shannon_entropy(density_matrix), float(weight)
 
     def _expected_entropy_after(self, game_state: GameState, decision: Decision) -> float:
         """
-        Expected Shannon entropy of the density matrix after resolving `decision`.
+        Expected Shannon entropy of the density matrix after resolving `decision`, weighted
+        by the combinatorial count (joint probability) of each hypothetical outcome.
 
         - SingleCutDecision: deterministic; process on a copy (actual hand matches the
           revealed ranks, so process_decision bookkeeping is consistent).
-        - DualCutDecision: probabilistic. Let r range over every rank with p_r > 0 at the
-          askee position. For each r, evaluate the hypothetical as added constraints
-          (askee-position → rank r; on success, also asker-position → matching wire,
-          minimax'd). Weight entropies by p_r.
+        - DualCutDecision: enumerate every plausible askee rank r. For each r, the kernel
+          returns both the entropy of the post-askee state AND its combinatorial weight
+          (joint probability unnormalized). Infeasible outcomes (weight=0) drop out
+          automatically. On success branches, Level C minimax picks the asker response
+          that minimizes post-state entropy; that minimum becomes the r's contribution.
         """
         if isinstance(decision, SingleCutDecision):
             cloned = copy.deepcopy(game_state)
@@ -132,22 +135,17 @@ class Player:
     def _expected_entropy_after_dual_cut(
             self, game_state: GameState, decision: DualCutDecision,
     ) -> float:
-        density_matrix = self._density_matrix(game_state)
         askee = decision.askee_player_index
+        asker = decision.asker_player_index
         askee_pos = decision.askee_hand_position
         claim_color = decision.wire.color
         claim_rank = decision.wire.rank  # 0 if unspecified
 
         base_extras = self._dual_cut_base_extras(game_state, decision)
 
-        expected_entropy = 0.0
-        total_probability = 0.0
+        total_weight = 0.0
+        weighted_entropy_sum = 0.0
         for rank_index in range(len(game_state.wire_ranks)):
-            probability = float(density_matrix[askee, askee_pos, rank_index])
-            # Skip negligible-probability branches: pinning a near-impossible rank produces
-            # infeasible states (weight=0, density=NaN) downstream.
-            if probability < 1e-9:
-                continue
             rank_wire = game_state.wire_ranks[rank_index]
             is_successful = (
                 rank_wire.color == claim_color
@@ -160,33 +158,36 @@ class Player:
                 indicator_location_index=askee_pos,
             )]
 
-            try:
-                if is_successful:
-                    branch_entropy = self._minimum_entropy_over_asker_responses(
-                        game_state, decision, branch_extras,
-                    )
-                else:
-                    branch_entropy = self._entropy_with_extra_constraints(game_state, branch_extras)
-            except RuntimeError:
-                # Joint infeasibility under the hypothetical outcome — drop this branch.
+            # Joint weight of "askee has rank r at askee_pos given base constraints".
+            # weight == 0 means the hypothetical is infeasible — drop it.
+            entropy_r, weight_r = self._entropy_and_weight_with_extra_constraints(
+                game_state, branch_extras,
+            )
+            if weight_r == 0.0:
                 continue
 
-            expected_entropy += probability * branch_entropy
-            total_probability += probability
+            if is_successful:
+                entropy_r = self._minimum_entropy_over_asker_responses(
+                    game_state, decision, branch_extras, fallback_entropy=entropy_r,
+                )
 
-        # density-matrix probabilities at the askee position should sum to 1 across ranks;
-        # guard against drift by renormalizing if they don't.
-        if total_probability > 0.0:
-            expected_entropy /= total_probability
-        return expected_entropy
+            weighted_entropy_sum += weight_r * entropy_r
+            total_weight += weight_r
+
+        if total_weight == 0.0:
+            # No feasible outcome at all — treat as zero information gain.
+            return 0.0
+        return weighted_entropy_sum / total_weight
 
     def _minimum_entropy_over_asker_responses(
             self,
             game_state: GameState,
             dual_cut_decision: DualCutDecision,
             branch_extras_so_far: list,
+            fallback_entropy: float,
     ) -> float:
-        """Minimax: enumerate every legal asker response and return the smallest entropy."""
+        """Minimax: enumerate every legal asker response and return the smallest entropy.
+        If no asker response is feasible, return `fallback_entropy` (post-askee entropy)."""
         asker = dual_cut_decision.asker_player_index
         claim_color = dual_cut_decision.wire.color
         claim_rank = dual_cut_decision.wire.rank
@@ -204,22 +205,16 @@ class Player:
                 wire_rank_index=game_state.wire_to_index_mapping[wire],
                 indicator_location_index=position,
             )]
-            # Skip jointly-infeasible asker responses: the single-rank density matrix at the
-            # askee position can show p > 0 while the joint constraint with the asker's
-            # chosen position triggers a count overflow (sorted-block structure forces extra
-            # copies). Those scenarios can't happen in reality, so they shouldn't contribute
-            # to the minimax.
-            try:
-                entropy = self._entropy_with_extra_constraints(game_state, extras)
-            except RuntimeError:
+            entropy, weight = self._entropy_and_weight_with_extra_constraints(
+                game_state, extras,
+            )
+            if weight == 0.0:
                 continue
             if entropy < best_entropy:
                 best_entropy = entropy
 
         if best_entropy == float("inf"):
-            # Asker has no matching unrevealed wire — shouldn't occur per _get_all_dual_cut_decisions;
-            # fall back to post-askee entropy rather than returning inf.
-            return self._entropy_with_extra_constraints(game_state, branch_extras_so_far)
+            return fallback_entropy
         return best_entropy
 
     def _get_all_single_cut_decisions(self, game_state: GameState) -> list[SingleCutDecision]:
