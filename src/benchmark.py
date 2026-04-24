@@ -1,7 +1,7 @@
 import time
 import numpy as np
 from src.constraint import SubsetConstraint
-from src.probability_utils import compute_probability_matrices
+from src.probability_utils import compute_probability_matrices, compute_shannon_entropy
 
 
 def make_kwargs():
@@ -28,7 +28,9 @@ if __name__ == '__main__':
     kwargs = make_kwargs()
 
     # warm up numba + caches
-    compute_probability_matrices(**kwargs)
+    results = compute_probability_matrices(**kwargs)
+    # print some stuff to show-case entropy results
+    print(np.log2(results[2]), np.log2(results[3]), compute_shannon_entropy(results[0]))
 
     N = 20
     times = []

@@ -26,7 +26,14 @@
     * You can probably do some conditional probability with log(p(making_moves | hand)) for each player
     * Might need a temperature parameter to factor in "human randomness"
 
+* Making optimal entropy decisions is freaking hard...
+  * Coming up with entropy bounds is hard
+  * Doing the tree of make dual cut -> response -> maybe second response is blowing up the state space
+  * At about 1s/eval worst case it's proving to be too expensive
+
 ### Sketch of how the probability_utils works
+
+TODO
 
 
 

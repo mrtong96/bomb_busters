@@ -8,7 +8,7 @@ from src.constraint import (
     WireAskConstraint,
     YellowWireAskConstraint,
 )
-from src.decision import Decision, CutDecision, DualCutDecision, AskeeResponseDecision, SingleCutDecision, \
+from src.decision import Decision, DualCutDecision, AskeeResponseDecision, SingleCutDecision, \
     AskerResponseDecision
 from src.game_state import GameState
 from src.probability_utils import compute_probability_matrices, compute_shannon_entropy
@@ -16,8 +16,9 @@ from src.wire import Wire, BLUE, YELLOW, RED
 
 
 class Player:
-    def __init__(self, player_index: int):
+    def __init__(self, player_index: int, decision_making_process='greedy'):
         self.player_index = player_index
+        self.decision_making_process = decision_making_process
 
     def make_decision(self, game_state: GameState) -> Decision:
         """
@@ -35,7 +36,89 @@ class Player:
             game_state: The state of the game
         """
         legal_decisions = self.get_all_legal_decisions(game_state)
-        return self.make_best_entropy_decision(game_state, legal_decisions)
+
+        if self.decision_making_process == 'greedy':
+            return self.make_greedy_decision(game_state, legal_decisions)
+        elif self.decision_making_process == 'entropy':
+            return self.make_best_entropy_decision(game_state, legal_decisions)
+        else:
+            raise NotImplementedError(f"unrecognized decision making process: {self.decision_making_process}")
+
+    def make_greedy_decision(self, game_state: GameState, legal_decisions: list[Decision]) -> Decision:
+        """
+        Out of all decisions, choose the one that maximizes the probability of success.
+        Not altruistic but way easier to implement.
+
+        Preference rules:
+          - If a response is the only legal option (turn-mid response phase), return it.
+          - Else if any single cut exists, pick the one that minimizes post-state global
+            (public-observer) entropy. Single cuts always succeed, so "best" is chosen by
+            information content rather than success probability.
+          - Else (only dual cuts remain), pick the dual cut whose claim is most likely to
+            succeed from the asker's own view: conditioning the density matrix on the
+            asker's full hand (every position pinned to its actual rank).
+        """
+        if len(legal_decisions) == 1:
+            return legal_decisions[0]
+
+        single_cuts = [d for d in legal_decisions if isinstance(d, SingleCutDecision)]
+        if single_cuts:
+            return min(
+                single_cuts,
+                key=lambda d: self._expected_entropy_after(game_state, d),
+            )
+
+        # Only dual cuts left — pick by asker-view success probability.
+        asker_pins = self._own_hand_pins(game_state)
+        density_matrix, *_ = compute_probability_matrices(
+            *self._kernel_args(game_state, asker_pins)
+        )
+        best_decision = None
+        best_probability = -1.0
+        for decision in legal_decisions:
+            if not isinstance(decision, DualCutDecision):
+                raise RuntimeError(
+                    f"expected only DualCutDecision in the fallback branch, got {type(decision)}"
+                )
+            probability = self._dual_cut_success_probability(
+                density_matrix, game_state, decision,
+            )
+            if probability > best_probability:
+                best_probability = probability
+                best_decision = decision
+        return best_decision
+
+    def _own_hand_pins(self, game_state: GameState) -> list:
+        """RankIndicatorConstraint for every position in this player's own hand — the
+        asker's private knowledge that they know every rank in their own hand exactly."""
+        pins = []
+        for position, wire in enumerate(game_state.player_wires[self.player_index]):
+            pins.append(RankIndicatorConstraint(
+                player_index=self.player_index,
+                wire_rank_index=game_state.wire_to_index_mapping[wire],
+                indicator_location_index=position,
+            ))
+        return pins
+
+    def _dual_cut_success_probability(
+            self,
+            density_matrix: np.ndarray,
+            game_state: GameState,
+            decision: DualCutDecision,
+    ) -> float:
+        """P(askee has claimed rank at askee_pos) under the density_matrix given.
+        For rank-unspecified yellow claims, sum over every yellow rank at that cell."""
+        askee = decision.askee_player_index
+        position = decision.askee_hand_position
+        if decision.wire.rank != 0:
+            return float(density_matrix[
+                askee, position, game_state.wire_to_index_mapping[decision.wire]
+            ])
+        return float(sum(
+            density_matrix[askee, position, i]
+            for i, rank_wire in enumerate(game_state.wire_ranks)
+            if rank_wire.color == YELLOW
+        ))
 
     def make_best_entropy_decision(self, game_state: GameState, legal_decisions: list[Decision]) -> Decision:
         """
@@ -106,27 +189,33 @@ class Player:
             cloned = copy.deepcopy(game_state)
             cloned.process_decision(decision)
             return self._entropy_of_state(cloned)
-
-        if isinstance(decision, DualCutDecision):
+        elif isinstance(decision, DualCutDecision):
             return self._expected_entropy_after_dual_cut(game_state, decision)
-
-        raise NotImplementedError(f"cannot evaluate entropy for decision of type {type(decision)}")
+        else:
+            raise NotImplementedError(f"cannot evaluate entropy for decision of type {type(decision)}")
 
     def _dual_cut_base_extras(
             self, game_state: GameState, decision: DualCutDecision,
     ) -> list:
-        """Extras from the dual cut ask itself (WireAsk or YellowWireAsk)."""
+        """Extras from the dual cut ask itself (WireAsk or YellowWireAsk).
+
+        Specific-rank asks emit a WireAskConstraint. Rank-unspecified asks must be yellow
+        (that's the only colour for which the game allows an unspecified-rank dual cut);
+        legal-decision enumeration is responsible for only producing a rank-0 claim when
+        at least one yellow rank exists in the deck, so no feasibility check is needed here.
+        """
         if decision.wire.rank != 0:
             return [WireAskConstraint(
                 player_index=decision.asker_player_index,
                 wire_rank_index=game_state.wire_to_index_mapping[decision.wire],
             )]
+        assert decision.wire.color == YELLOW, (
+            f"rank-0 dual cut claim must be yellow; got color {decision.wire.color}"
+        )
         yellow_rank_indexes = [
             i for i, rank_wire in enumerate(game_state.wire_ranks)
-            if rank_wire.color == decision.wire.color
+            if rank_wire.color == YELLOW
         ]
-        if not yellow_rank_indexes:
-            return []
         return [YellowWireAskConstraint(
             player_index=decision.asker_player_index,
             yellow_rank_indexes=yellow_rank_indexes,
@@ -136,7 +225,6 @@ class Player:
             self, game_state: GameState, decision: DualCutDecision,
     ) -> float:
         askee = decision.askee_player_index
-        asker = decision.asker_player_index
         askee_pos = decision.askee_hand_position
         claim_color = decision.wire.color
         claim_rank = decision.wire.rank  # 0 if unspecified
