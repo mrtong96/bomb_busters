@@ -1,0 +1,12 @@
+# Runtime dependencies
+#
+# Pin lower bounds at the versions verified against this codebase; cap upper bounds
+# at the next major to avoid silent breakage from major releases. tkinter is part of
+# the standard library, so no entry is needed for the UI.
+
+numpy>=1.24,<3
+numba>=0.58,<1
+typing_extensions>=4.0,<5
+
+# Development / testing
+pytest>=7.0,<10

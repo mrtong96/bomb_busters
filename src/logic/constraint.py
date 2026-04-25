@@ -221,7 +221,7 @@ def get_constraint_matrix(
     # To start with, everything is valid
     constraint_matrix = np.ones(
         (len(wire_limits_per_player), len(wire_ranks), max(wire_limits_per_player) + 1, 5),
-        dtype=np.bool
+        dtype=np.bool_
     )
 
     # We know that there are wire limits per player, add these constraints
