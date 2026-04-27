@@ -36,7 +36,7 @@ def play_one_game(seed: int) -> tuple[bool, float, int, int]:
     return gm.game_state.has_won, elapsed, turns, gm.game_state.total_health
 
 
-def main(num_games: int = 25) -> None:
+def main(num_games: int = 100) -> None:
     print(f"Playing {num_games} greedy games (5 players, 48 blue wires = 12 ranks × 4)...")
 
     # Warm up numba JIT on the first game; its timing gets reported separately so it

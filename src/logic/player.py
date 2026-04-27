@@ -51,7 +51,7 @@ class Player:
 
         Preference rules:
           - If a response is the only legal option (turn-mid response phase), return it.
-          - (TODO implement) else if there are RankIndicatorRevealDecision to make, then pick the one
+          - else if there are RankIndicatorRevealDecision to make, then pick the one
             that minimizes global entropy
           - Else if any single cut exists, pick the one that minimizes post-state global
             (public-observer) entropy. Single cuts always succeed, so "best" is chosen by
